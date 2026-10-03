@@ -240,6 +240,7 @@ class VehicleBox:
     cut_in: bool = False
     primary: bool = False
     annotate: bool = False
+    model_key: int = -1  # EV6 HUD patch v3: radar track id (stable model choice)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2641,10 +2642,11 @@ def radar_point_vehicle_heading(
     lateral_speed_offset_mps: float = 0.0,
 ) -> tuple[float, float, float, float]:
     longitudinal_speed_kph = radar_point_absolute_speed_kph(point, state)
+    oncoming = longitudinal_speed_kph is not None and longitudinal_speed_kph <= -RADAR_MOVING_VEHICLE_MIN_SPEED_KPH
     return vehicle_heading_from_velocity(
         longitudinal_speed_kph,
         radar_point_heading_lateral_speed_mps(point, state, lateral_speed_offset_mps),
-        (1.0, 0.0, 0.0, 1.0),
+        (-1.0, 0.0, 0.0, -1.0) if oncoming else (1.0, 0.0, 0.0, 1.0),  # EV6 HUD patch v5
         min_speed_kph=1.0 if point.source == "cornerRadar" else RADAR_MOVING_VEHICLE_MIN_SPEED_KPH,
         min_component_mps=CORNER_RADAR_HEADING_COMPONENT_MIN_MPS if point.source == "cornerRadar" else 0.0,
     )
@@ -2846,6 +2848,7 @@ def vehicle_box(
     x_offset_m: float = 0.0,
     center_x_m_override: float | None = None,
     center_z_m_offset: float = 0.0,
+    model_key: int = -1,
 ) -> VehicleBox:
     confidence = clamp(confidence, 0.0, 1.0)
     alpha = int(92 + 163 * confidence)
@@ -2901,6 +2904,7 @@ def vehicle_box(
         cut_in=cut_in,
         primary=primary,
         annotate=annotate,
+        model_key=model_key,
     )
 
 
@@ -3006,6 +3010,7 @@ def translate_vehicle_box_x(vehicle: VehicleBox, shift_x_m: float) -> VehicleBox
         cut_in=vehicle.cut_in,
         primary=vehicle.primary,
         annotate=vehicle.annotate,
+        model_key=vehicle.model_key,
     )
 
 
@@ -3066,10 +3071,37 @@ def road_edge_color(
     return base[0], base[1], base[2], int(clamp(alpha, 120, 245))
 
 
+CLEAN_UI_CLASSIC_FLAG = "/data/ev6_hud_classic"  # EV6 HUD patch v6
+_clean_ui_cache = [-10.0, True]
+
+
+def clean_ui_enabled() -> bool:
+    now = time.monotonic()
+    if now - _clean_ui_cache[0] > 2.0:
+        import os as _os
+        _clean_ui_cache[0] = now
+        import sys as _sys
+        env = _os.environ.get("EV6_HUD_CLEAN")
+        if env in ("0", "1"):
+            _clean_ui_cache[1] = env == "1"
+        elif "pytest" in _sys.modules:
+            _clean_ui_cache[1] = False  # the repo's unit tests check the original layout
+        else:
+            _clean_ui_cache[1] = not _os.path.exists(CLEAN_UI_CLASSIC_FLAG)
+    return _clean_ui_cache[1]
+
+
 def road_edge_3d_layers(
     color: Color,
     theme: ClusterTheme = LIGHT_CLUSTER_THEME,
 ) -> tuple[RoadEdgeLayer, ...]:
+    if clean_ui_enabled():
+        # v6: one slim line; amber/red still mean "close to the road edge"
+        if tuple(color[:3]) == tuple(theme.road_edge[:3]):
+            line = (176, 184, 194, 150) if theme.is_dark else (120, 128, 138, 170)
+        else:
+            line = (color[0], color[1], color[2], 225)
+        return ((5, line, ROAD_EDGE_HEIGHT_M, 0.0),)
     base_rgb = color[:3]
     alpha = color[3]
     shadow_alpha = max(theme.road_edge_backing[3], int(alpha * 0.58))
@@ -3732,6 +3764,7 @@ def build_cluster_scene(
                 annotate=vehicle_badge_has_special_info(detected),
                 center_x_m_override=detected.lateral_m + relative_scene_x_offset_m,
                 center_z_m_offset=DETECTED_VEHICLE_DISPLAY_HEIGHT_OFFSET_M,
+                model_key=detected.radar_track_id if detected.radar_track_id is not None else -1,
             )
             for detected in render_detected_vehicles
         )

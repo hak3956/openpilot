@@ -28,15 +28,15 @@ from cluster_config import (
 
 def test_cluster_h264_auto_bitrate_preserves_per_frame_budget_through_60_fps():
   expected = {
-    10: "2333k",
-    20: "4667k",
-    30: "7M",
-    40: "9333k",
-    50: "11667k",
+    10: "4667k",  # EV6 HUD patch: doubled per-frame budget
+    20: "9333k",
+    30: "14M",
+    40: "14M",
+    50: "14M",
     60: "14M",
   }
   assert {fps: resolved_usb_h264_bitrate("auto", fps, 30) for fps in expected} == expected
-  assert resolved_usb_h264_bitrate("auto", 0, 30) == "7M"
+  assert resolved_usb_h264_bitrate("auto", 0, 30) == "14M"
   assert resolved_usb_h264_bitrate("12M", 60, 30) == "12M"
 
 

@@ -9,6 +9,7 @@ import base64
 import math
 import os
 import time
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -94,6 +95,7 @@ from cluster_scene import (
     Vec3,
     VehicleBox,
     build_cluster_scene,
+    clean_ui_enabled,
     cluster_scene_state_key,
 )
 from cluster_system_monitor import SystemStats, SystemStatsSampler
@@ -107,6 +109,8 @@ OPENPILOT_ADDON_FONT_DIR = SELFDRIVE_DIR / "assets" / "addon" / "font"
 KAIGEN_GOTHIC_KR_BOLD_FONT_PATH = OPENPILOT_FONT_DIR / "KaiGenGothicKR-Bold.ttf"
 JETBRAINS_MONO_FONT_PATH = OPENPILOT_FONT_DIR / "JetBrainsMono-Medium.ttf"
 VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "cybertruck" / "cybertruck_cluster.obj"
+OTHER_VEHICLE_MODELS_DIR = CLUSTER_DIR / "assets" / "models" / "others"
+OTHER_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "generic" / "generic_car_cluster.obj"
 TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
 SPEED_BG_PATH = SELFDRIVE_DIR / "assets" / "images" / "speed_bg.png"
 TRAFFIC_RED_ICON_PATH = SELFDRIVE_DIR / "assets" / "images" / "traffic_red.png"
@@ -419,7 +423,7 @@ WORLD_LABEL_TEXTURE_CACHE_LIMIT = 512
 WORLD_LABEL_TEXTURE_SIZE_GRID = 0.25
 WORLD_LABEL_TEXTURE_PADDING_PX = 4
 VEHICLE_MATERIAL_COLORS: dict[str, tuple[int, int, int, int]] = {
-    "body": (156, 166, 172, 255),
+    "body": (238, 239, 235, 255),  # EV6 HUD patch: Snow White Pearl
     "wheel": (18, 20, 22, 255),
     "besi_roda": (36, 38, 42, 255),
     "light": (184, 222, 255, 255),
@@ -431,8 +435,109 @@ VEHICLE_MATERIAL_COLORS: dict[str, tuple[int, int, int, int]] = {
     "Material.004": (18, 20, 22, 255),
     "Material.005": (18, 20, 22, 255),
     "Material.006": (18, 20, 22, 255),
+    "other_body": (128, 136, 146, 255),  # EV6 HUD patch v4: generic fallback car (gunmetal)
+    "cabin": (24, 27, 31, 255),
 }
 DEFAULT_VEHICLE_MATERIAL_COLOR = (142, 150, 156, 255)
+VEHICLE_OTHER_TINT = (172, 178, 184)  # EV6 HUD patch v3: fallback grey
+CLEAN_SPEED_OVER_RED_KPH = 10.0  # EV6 HUD patch v6: speed turns amber above the limit, red 10+ above
+CLEAN_GHOST_TINT = (112, 118, 126)  # EV6 HUD patch v6: low-confidence side vehicles (dimmed)
+CLEAN_CUTIN_HOLD_S = 1.5  # EV6 HUD patch v6: keep a cut-in car orange this long after the flag drops
+CLEAN_CUTIN_MODEL_HOLD_S = 6.0  # ...and keep showing it with the same car model this long
+CLEAN_TTC_AMBER_S = 4.0  # EV6 HUD patch v6: lead label turns amber / red while closing in
+CLEAN_TTC_RED_S = 2.5
+CLEAN_SLOWDOWN_LABELS_KO = {
+    "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
+    "bump": "방지턱", "school": "어린이", "police": "경찰", "road": "도로제한", "route": "경로",
+    "model": "모델", "gas": "가속", "eco": "에코", "apply": "감속", "waze": "waze",
+}
+VEHICLE_CUTIN_TINT = (255, 150, 30)  # EV6 HUD patch v4: cut-in vehicle paint
+GROUND_DARK_RGB = (40, 43, 48)  # EV6 HUD patch v5: charcoal grey road (dark theme)
+GROUND_LIGHT_RGB = (200, 205, 211)  # EV6 HUD patch v5: silver grey road (light theme)
+GROUND_HALF_WIDTH_M = 160.0
+GROUND_Z_M = -0.03
+GROUND_ROWS_M = (-60.0, 0.0, 20.0, 40.0, 55.0, 70.0, 82.0, 92.0)
+GROUND_FADE = (0.0, 0.0, 0.0, 0.18, 0.42, 0.70, 0.90, 1.0)
+OTHER_VEHICLE_PAINT_RGB = (128, 136, 146)  # EV6 HUD patch v4: gunmetal grey body (assets/models/others)
+SIDE_VEHICLE_MODEL_SOURCES = ("liveTracks", "cornerRadar")
+SIDE_VEHICLE_MODEL_MIN_CONFIDENCE = 0.80  # below this the original small marker box is kept
+SIDE_VEHICLE_MODEL_SCALE = 0.94
+
+
+def vehicle_material_color(name: str) -> tuple[int, int, int, int]:
+    color = VEHICLE_MATERIAL_COLORS.get(name)
+    if color is not None:
+        return color
+    if name.startswith("rgb_") and len(name) == 10:
+        try:
+            return int(name[4:6], 16), int(name[6:8], 16), int(name[8:10], 16), 255
+        except ValueError:
+            pass
+    return DEFAULT_VEHICLE_MATERIAL_COLOR
+# EV6 HUD patch: simple Lambert + Blinn-Phong + fresnel shading for the 3D vehicle model.
+VEHICLE_LIGHT_DIR = (-0.35, -0.45, 0.82)  # towards the light (x=right, y=forward, z=up)
+VEHICLE_SHADER_VS_BODY = """
+IN vec3 vertexPosition;
+IN vec3 vertexNormal;
+IN vec4 vertexColor;
+uniform mat4 mvp;
+uniform mat4 matModel;
+uniform mat4 matNormal;
+OUT vec3 fragPos;
+OUT vec3 fragNormal;
+OUT vec4 fragColor;
+void main() {
+    fragPos = vec3(matModel * vec4(vertexPosition, 1.0));
+    fragNormal = vec3(matNormal * vec4(vertexNormal, 0.0));
+    fragColor = vertexColor;
+    gl_Position = mvp * vec4(vertexPosition, 1.0);
+}
+"""
+VEHICLE_SHADER_FS_BODY = """
+IN vec3 fragPos;
+IN vec3 fragNormal;
+IN vec4 fragColor;
+uniform vec4 colDiffuse;
+uniform vec3 lightDir;
+uniform vec3 viewPos;
+uniform vec4 paintKey;
+uniform vec4 paintOverride;
+void main() {
+    vec4 src = fragColor;
+    if (paintOverride.a > 0.5 && all(lessThan(abs(src.rgb - paintKey.rgb), vec3(0.012)))) {
+        src.rgb = paintOverride.rgb;  // warning colour replaces the body paint only
+    }
+    vec4 base = src * colDiffuse;
+    vec3 n = normalize(fragNormal);
+    vec3 v = normalize(viewPos - fragPos);
+    if (dot(n, v) < 0.0) n = -n;
+    vec3 l = normalize(lightDir);
+    float diff = max(dot(n, l), 0.0);
+    float fill = max(dot(n, normalize(vec3(0.6, 0.2, 0.4))), 0.0);
+    vec3 h = normalize(l + v);
+    float spec = pow(max(dot(n, h), 0.0), 40.0);
+    float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+    float lum = dot(base.rgb, vec3(0.299, 0.587, 0.114));
+    vec3 col = base.rgb * (0.46 + 0.50 * diff + 0.12 * fill);
+    col += vec3(1.0, 0.99, 0.97) * spec * (0.10 + 0.30 * lum);
+    col += vec3(0.96, 0.97, 1.0) * fres * 0.10 * lum;
+    OUTCOLOR = vec4(min(col, vec3(1.0)), base.a);
+}
+"""
+
+
+def vehicle_shader_sources(gl_version: int) -> tuple[str, str]:
+    if gl_version in (getattr(rl, "RL_OPENGL_33", 3), getattr(rl, "RL_OPENGL_43", 4)):
+        vs = "#version 330\n#define IN in\n#define OUT out\n" + VEHICLE_SHADER_VS_BODY
+        fs = ("#version 330\n#define IN in\nout vec4 finalColor;\n#define OUTCOLOR finalColor\n"
+              + VEHICLE_SHADER_FS_BODY)
+    else:
+        vs = "#define IN attribute\n#define OUT varying\n" + VEHICLE_SHADER_VS_BODY
+        fs = ("#ifdef GL_ES\nprecision mediump float;\n#endif\n#define IN varying\n#define OUTCOLOR gl_FragColor\n"
+              + VEHICLE_SHADER_FS_BODY)
+    return vs, fs
+
+
 NV12_PACK_VERTEX_SHADER = """
 attribute vec3 vertexPosition;
 attribute vec2 vertexTexCoord;
@@ -950,6 +1055,10 @@ class ClusterUiRenderer:
         self._nv12_dmabuf_pool_disabled = False
         self._vehicle_model = None
         self._vehicle_model_load_attempted = False
+        self._other_vehicle_models: list[object] = []
+        self._cutin_hold: list[float] | None = None  # EV6 HUD patch v6: [colour until, x, long_m, model idx, model until]
+        self._other_vehicle_paint: list[tuple[object, int] | None] = []
+        self._vehicle_shaders: list[tuple[object, int]] = []
         self._scene_cache_key: tuple[object, ...] | None = None
         self._scene_cache: ClusterScene | None = None
         self._speed_bg_texture = None
@@ -1330,6 +1439,11 @@ class ClusterUiRenderer:
         if self._vehicle_model is not None:
             rl.unload_model(self._vehicle_model)
             self._vehicle_model = None
+        for other_model in self._other_vehicle_models:
+            rl.unload_model(other_model)
+        self._other_vehicle_models = []
+        self._other_vehicle_paint = []
+        self._vehicle_shaders = []
         self._vehicle_model_load_attempted = False
         self._scene_cache_key = None
         self._scene_cache = None
@@ -2801,9 +2915,85 @@ class ClusterUiRenderer:
                 rl.unload_model(model)
                 return
             self._vehicle_model = model
+            self._attach_vehicle_shader(model)
+            self._other_vehicle_models = self._load_other_vehicle_models()
         except Exception as exc:
             print(f"Cybertruck vehicle model load failed: {exc}")
             self._vehicle_model = None
+
+    def _load_other_vehicle_models(self) -> list[object]:
+        # Lead / cut-in / confident side vehicles: every OBJ in assets/models/others (sorted), else the
+        # generic car. Any file that fails is skipped; with none loaded the original marker boxes stay.
+        paths = sorted(OTHER_VEHICLE_MODELS_DIR.glob("*.obj")) if OTHER_VEHICLE_MODELS_DIR.is_dir() else []
+        if not paths and OTHER_VEHICLE_MODEL_PATH.exists():
+            paths = [OTHER_VEHICLE_MODEL_PATH]
+        models = []
+        self._other_vehicle_paint = []
+        for path in paths:
+            try:
+                mesh = self._load_obj_mesh(path)
+                rl.upload_mesh(rl.ffi.addressof(mesh), False)
+                model = rl.load_model_from_mesh(mesh)
+                if not rl.is_model_valid(model):
+                    rl.unload_model(model)
+                    continue
+                shader = self._attach_vehicle_shader(model)
+                paint = None
+                if shader is not None:
+                    key = rl.ffi.new("float[]", [c / 255.0 for c in OTHER_VEHICLE_PAINT_RGB] + [1.0])
+                    rl.set_shader_value(shader, rl.get_shader_location(shader, "paintKey"), key,
+                                        rl.ShaderUniformDataType.SHADER_UNIFORM_VEC4)
+                    override_loc = rl.get_shader_location(shader, "paintOverride")
+                    if override_loc >= 0:
+                        paint = (shader, override_loc)
+                models.append(model)
+                self._other_vehicle_paint.append(paint)
+            except Exception as exc:
+                print(f"Other vehicle model {path.name} load failed: {exc}")
+        if models:
+            print(f"Other vehicle models loaded: {len(models)}")
+        return models
+
+    def _other_model_index(self, vehicle: VehicleBox) -> int:
+        key = vehicle.model_key if vehicle.model_key >= 0 else zlib.crc32((vehicle.label or vehicle.source).encode())
+        return int(key) % len(self._other_vehicle_models)
+
+    def _set_other_paint(self, index: int, color) -> bool:
+        paint = self._other_vehicle_paint[index] if index < len(self._other_vehicle_paint) else None
+        if paint is None:
+            return False
+        shader, loc = paint
+        value = [0.0, 0.0, 0.0, 0.0] if color is None else [c / 255.0 for c in color[:3]] + [1.0]
+        rl.set_shader_value(shader, loc, rl.ffi.new("float[]", value), rl.ShaderUniformDataType.SHADER_UNIFORM_VEC4)
+        return True
+
+    def _uses_other_model(self, vehicle: VehicleBox) -> bool:
+        if not self._other_vehicle_models or vehicle.source == "radarPoint":
+            return False
+        if vehicle.primary or vehicle.cut_in:
+            return True
+        if clean_ui_enabled() and (vehicle.source in SIDE_VEHICLE_MODEL_SOURCES or vehicle.source == "carState"):
+            return True  # EV6 HUD patch v6 (carState = blind-spot car reported by the car itself)
+        return vehicle.source in SIDE_VEHICLE_MODEL_SOURCES and vehicle.confidence >= SIDE_VEHICLE_MODEL_MIN_CONFIDENCE
+
+    def _attach_vehicle_shader(self, model):
+        # One shader instance per model (UnloadModel frees its material shader).
+        # Any failure keeps raylib's default (unlit) shader, i.e. the original look.
+        try:
+            vs, fs = vehicle_shader_sources(int(rl.rl_get_version()))
+            shader = rl.load_shader_from_memory(vs, fs)
+            if not rl.is_shader_valid(shader):
+                return None
+            light = rl.ffi.new("float[]", list(VEHICLE_LIGHT_DIR))
+            rl.set_shader_value(shader, rl.get_shader_location(shader, "lightDir"), light,
+                                rl.ShaderUniformDataType.SHADER_UNIFORM_VEC3)
+            for index in range(int(model.materialCount)):
+                model.materials[index].shader = shader
+            self._vehicle_shaders.append((shader, rl.get_shader_location(shader, "viewPos")))
+            return shader
+        except Exception as exc:
+            print(f"Vehicle shader setup failed, using unlit model: {exc}")
+            return None
 
     def _load_follow_vehicle_texture(self) -> None:
         if self._follow_vehicle_texture is not None:
@@ -2972,7 +3162,7 @@ class ClusterUiRenderer:
             elif tag == "vn" and len(parts) >= 4:
                 normals.append((float(parts[1]), float(parts[2]), float(parts[3])))
             elif tag == "usemtl" and len(parts) >= 2:
-                material_color = VEHICLE_MATERIAL_COLORS.get(parts[1], DEFAULT_VEHICLE_MATERIAL_COLOR)
+                material_color = vehicle_material_color(parts[1])
             elif tag == "f" and len(parts) >= 4:
                 face = [parse_face_token(token) for token in parts[1:]]
                 for index in range(1, len(face) - 1):
@@ -2999,15 +3189,15 @@ class ClusterUiRenderer:
         return mesh
 
     def _alloc_float_array(self, values: list[float]):
-        data = rl.ffi.cast("float *", rl.mem_alloc(len(values) * rl.ffi.sizeof("float")))
-        for index, value in enumerate(values):
-            data[index] = value
+        raw = np.asarray(values, dtype=np.float32).tobytes()
+        data = rl.ffi.cast("float *", rl.mem_alloc(len(raw)))
+        rl.ffi.memmove(data, raw, len(raw))
         return data
 
     def _alloc_uchar_array(self, values: list[int]):
-        data = rl.ffi.cast("unsigned char *", rl.mem_alloc(len(values) * rl.ffi.sizeof("unsigned char")))
-        for index, value in enumerate(values):
-            data[index] = int(value)
+        raw = np.asarray(values, dtype=np.uint8).tobytes()
+        data = rl.ffi.cast("unsigned char *", rl.mem_alloc(len(raw)))
+        rl.ffi.memmove(data, raw, len(raw))
         return data
 
     def _draw_scene(self, scene: ClusterScene, state: ClusterUiState) -> None:
@@ -3025,6 +3215,11 @@ class ClusterUiRenderer:
         scene_offset_x = driving_offset_x - view_shift_x
         if abs(scene_offset_x) > 0.001:
             rl.rl_viewport(int(round(scene_offset_x)), 0, self.width, self.height)
+        if self._vehicle_shaders:
+            view_pos = rl.ffi.new("float[]", [float(camera.position.x), float(camera.position.y), float(camera.position.z)])
+            for vehicle_shader, view_loc in self._vehicle_shaders:
+                if view_loc >= 0:
+                    rl.set_shader_value(vehicle_shader, view_loc, view_pos, rl.ShaderUniformDataType.SHADER_UNIFORM_VEC3)
         profile_stage = self._profile_start()
         rl.begin_mode_3d(camera)
         self._profile_add("draw_scene.begin_mode_3d", profile_stage)
@@ -3032,6 +3227,7 @@ class ClusterUiRenderer:
         if abs(scene.scene_shift_x_m) > 0.0001:
             rl.rl_translatef(scene.scene_shift_x_m, 0.0, 0.0)
         try:
+            self._draw_ground()  # EV6 HUD patch v5
             profile_stage = self._profile_start()
             for strip in scene.highlight_lanes:
                 self._draw_strip(strip)
@@ -3045,12 +3241,19 @@ class ClusterUiRenderer:
                 self._draw_strip(strip)
             self._profile_add("draw_scene.lane_markings", profile_stage)
             profile_stage = self._profile_start()
+            path_grey = clean_ui_enabled() and state.lfa_active is False  # EV6 HUD patch v6
             for strip in scene.planned_path:
+                if path_grey:
+                    r, g, b = strip.color[:3]
+                    lum = int(0.30 * r + 0.59 * g + 0.11 * b)
+                    lum = int(lum * 0.55 + 70)
+                    strip = replace(strip, color=(lum, lum, lum, strip.color[3] if len(strip.color) > 3 else 255))
                 self._draw_strip(strip)
             self._profile_add("draw_scene.planned_path", profile_stage)
             profile_stage = self._profile_start()
-            for point in scene.radar_points:
-                self._draw_radar_point(point)
+            if not clean_ui_enabled():  # EV6 HUD patch v6
+                for point in scene.radar_points:
+                    self._draw_radar_point(point)
             self._profile_add("draw_scene.radar_points", profile_stage)
             profile_stage = self._profile_start()
             for vehicle in scene.vehicles:
@@ -3068,7 +3271,7 @@ class ClusterUiRenderer:
         try:
             profile_stage = self._profile_start()
             self._draw_radar_point_labels(
-                scene.radar_points,
+                () if clean_ui_enabled() else scene.radar_points,  # EV6 HUD patch v6
                 camera,
                 scene.scene_shift_x_m,
                 state.radar_info_mode,
@@ -3086,6 +3289,23 @@ class ClusterUiRenderer:
         finally:
             if abs(scene_offset_x) > 0.001:
                 rl.rl_pop_matrix()
+
+    def _draw_ground(self) -> None:
+        # Flat ground plane that fades into the background colour towards the horizon.
+        theme = self._current_theme()
+        near = GROUND_DARK_RGB if theme.is_dark else GROUND_LIGHT_RGB
+        far = tuple(theme.bg[:3])
+        half_w = GROUND_HALF_WIDTH_M
+        rl.rl_begin(rl.RL_TRIANGLES)
+        for index in range(len(GROUND_ROWS_M) - 1):
+            y0, y1 = GROUND_ROWS_M[index], GROUND_ROWS_M[index + 1]
+            c0 = [int(round(n + (f - n) * GROUND_FADE[index])) for n, f in zip(near, far)]
+            c1 = [int(round(n + (f - n) * GROUND_FADE[index + 1])) for n, f in zip(near, far)]
+            for x, y, c in ((-half_w, y0, c0), (half_w, y0, c0), (half_w, y1, c1),
+                            (-half_w, y0, c0), (half_w, y1, c1), (-half_w, y1, c1)):
+                rl.rl_color4ub(c[0], c[1], c[2], 255)
+                rl.rl_vertex3f(x, y, GROUND_Z_M)
+        rl.rl_end()
 
     def _world_view_shift_x(self, state: ClusterUiState) -> float:
         screen_mode = self._effective_screen_mode(state)
@@ -3129,6 +3349,9 @@ class ClusterUiRenderer:
         return -view_shift_x
 
     def _draw_tpms_status(self, state: ClusterUiState) -> None:
+        if clean_ui_enabled():
+            self._draw_clean_tpms(state)  # EV6 HUD patch v6
+            return
         tpms = state.tpms
         pressures = (tpms.fl, tpms.fr, tpms.rl, tpms.rr)
         if not any(value is not None for value in pressures):
@@ -3346,7 +3569,7 @@ class ClusterUiRenderer:
             and not source_marker
             and (not vehicle.source or vehicle.primary or vehicle.cut_in)
         )
-        if use_model:
+        if use_model or self._uses_other_model(vehicle):  # EV6 HUD patch v3: realistic 3D cars
             self._draw_vehicle_shadow(vehicle)
             self._draw_vehicle_model(vehicle)
             return
@@ -3530,11 +3753,53 @@ class ClusterUiRenderer:
         position = rl.Vector3(vehicle.center.x, vehicle.center.y, 0.035)
         rotation_axis = rl.Vector3(0.0, 0.0, 1.0)
         scale = rl.Vector3(vehicle.width_m, vehicle.length_m, vehicle.height_m)
+        is_ego = not vehicle.source and not vehicle.primary and not vehicle.cut_in
+        if not is_ego and not vehicle.primary and not vehicle.cut_in and self._uses_other_model(vehicle):
+            # side-lane vehicles: slightly smaller than lead vehicles (radar-only position)
+            scale = rl.Vector3(vehicle.width_m * SIDE_VEHICLE_MODEL_SCALE, vehicle.length_m * SIDE_VEHICLE_MODEL_SCALE,
+                               vehicle.height_m * SIDE_VEHICLE_MODEL_SCALE)
         try:
             rl.rl_disable_backface_culling()
             alpha = int(92 + 163 * clamp(vehicle.confidence, 0.0, 1.0))
-            tint = rl_color(vehicle.body_color) if vehicle.source == "radarPoint" else rl_color(WHITE, alpha)
-            rl.draw_model_ex(self._vehicle_model, position, rotation_axis, yaw_deg, scale, tint)
+            model = self._vehicle_model
+            if vehicle.source == "radarPoint":
+                tint = rl_color(vehicle.body_color)
+            elif is_ego:
+                tint = rl_color(WHITE, alpha)  # ego: EV6, Snow White Pearl
+            elif self._uses_other_model(vehicle):
+                index = self._other_model_index(vehicle)
+                held = False
+                if clean_ui_enabled():
+                    # The cut-in flag often lasts only a few frames and the same car then comes back under a
+                    # different track id: follow it by position for CLEAN_CUTIN_HOLD_S (colour and model).
+                    now = time.monotonic()
+                    hold = self._cutin_hold
+                    if vehicle.cut_in:
+                        if hold is not None and hold[4] > now and abs(hold[1] - vehicle.center.x) < 1.6:
+                            index = int(hold[3]) % len(self._other_vehicle_models)
+                        self._cutin_hold = [now + CLEAN_CUTIN_HOLD_S, vehicle.center.x, vehicle.longitudinal_m, index,
+                                            now + CLEAN_CUTIN_MODEL_HOLD_S]
+                    elif (hold is not None and hold[4] > now and (vehicle.primary or vehicle.longitudinal_m > 0.0)
+                          and abs(hold[1] - vehicle.center.x) < 1.6 and abs(hold[2] - vehicle.longitudinal_m) < 4.0):
+                        index = int(hold[3]) % len(self._other_vehicle_models)
+                        hold[1], hold[2] = vehicle.center.x, vehicle.longitudinal_m
+                        held = hold[0] > now
+                model = self._other_vehicle_models[index]
+                body_rgb = tuple(vehicle.body_color[:3])
+                warning = VEHICLE_CUTIN_TINT if held else None
+                if vehicle.cut_in:
+                    warning = VEHICLE_CUTIN_TINT
+                elif body_rgb in (tuple(RED), tuple(AMBER)):
+                    warning = body_rgb  # oncoming / crossing traffic keeps its warning colour
+                ghost = (warning is None and not vehicle.primary and not vehicle.cut_in
+                         and vehicle.confidence < SIDE_VEHICLE_MODEL_MIN_CONFIDENCE)
+                if self._set_other_paint(index, warning) or warning is None:
+                    tint = rl_color(CLEAN_GHOST_TINT if ghost else WHITE)  # warning colour repaints the body in the shader
+                else:
+                    tint = rl_color(warning)  # unlit fallback: multiply
+            else:
+                tint = rl_color(VEHICLE_OTHER_TINT, alpha)
+            rl.draw_model_ex(model, position, rotation_axis, yaw_deg, scale, tint)
         finally:
             rl.rl_enable_backface_culling()
 
@@ -3546,6 +3811,9 @@ class ClusterUiRenderer:
         radar_info_mode: int = CLUSTER_RADAR_INFO_ALL_SPEED_DISTANCE,
         radar_source_color_mode: int = 0,
     ) -> None:
+        clean = clean_ui_enabled()
+        if clean:  # EV6 HUD patch v6: only the lead (L1) and cut-in vehicles get a label
+            vehicles = tuple(v for v in vehicles if v.cut_in or vehicle_has_lead_one_metrics(v))
         show_vehicle_info = radar_info_shows_vehicle(radar_info_mode)
         if not show_vehicle_info and not any(vehicle.primary or vehicle.cut_in for vehicle in vehicles):
             return
@@ -3618,6 +3886,15 @@ class ClusterUiRenderer:
                 distance_y = screen.y - distance_size * 0.5
             center_x = screen.x
             text_color = vehicle_metric_color(vehicle, theme, radar_source_color_mode)
+            if clean:
+                text = "  ".join(part for part in (distance, speed) if part)
+                text_color = AMBER if vehicle.cut_in else (WHITE if theme.is_dark else (26, 30, 36))
+                closing = vehicle.relative_speed_mps is not None and vehicle.relative_speed_mps < -0.5
+                if closing and vehicle.ttc_s is not None and 0.0 < vehicle.ttc_s < CLEAN_TTC_AMBER_S:
+                    text_color = RED if vehicle.ttc_s < CLEAN_TTC_RED_S else AMBER
+                metric_labels.append(VehicleMetricLabel(
+                    vehicle, (VehicleMetricLine(text, center_x, screen.y - 16.0, 20.0),), text_color, 0.0))
+                continue
             lines = []
             if distance:
                 lines.append(VehicleMetricLine(distance, center_x, distance_y, distance_size))
@@ -3669,6 +3946,13 @@ class ClusterUiRenderer:
         if lead is not None:
             visible.append(lead)
         shadow = self._current_theme().world_label_shadow if any(label.shadow_offset for label in visible) else None
+        if clean_ui_enabled():  # EV6 HUD patch v6: chip behind the label
+            dark = self._current_theme().is_dark
+            for label in visible:
+                x, y, width, height = self._vehicle_metric_label_rect(label)
+                self._rounded_rect(x - 10.0, y - 4.0, width + 20.0, height + 8.0, (height + 8.0) * 0.5,
+                                   (12, 14, 18, 175) if dark else (255, 255, 255, 215),
+                                   (*label.color[:3], 120), 1.5)
         for label in visible:
             for line in label.lines:
                 if label.shadow_offset:
@@ -4098,6 +4382,8 @@ class ClusterUiRenderer:
         *,
         include_core_usage: bool = True,
     ) -> None:
+        if clean_ui_enabled():
+            return  # EV6 HUD patch v6
         profile_stage = self._profile_start()
         screen_mode = self._effective_screen_mode(state)
         offset_x = self._driving_hud_offset_design_x(screen_mode)
@@ -6824,6 +7110,8 @@ class ClusterUiRenderer:
         return theme.muted
 
     def _draw_drive_status(self, state: ClusterUiState) -> None:
+        if clean_ui_enabled():
+            return  # EV6 HUD patch v6
         gear_text = (state.gear_text or "").strip().upper()
         if (
             not state.debug_ui_visible
@@ -7056,6 +7344,17 @@ class ClusterUiRenderer:
         speed_value = int(round(display_speed(clamp(display_speed_kph, 0.0, MAX_SPEED_KPH), self.is_metric)))
         speed_text = str(speed_value)
         speed_font_size = SPEED_VALUE_FONT_SIZE if len(speed_text) <= 2 else SPEED_VALUE_FONT_SIZE * 0.86
+        if clean_ui_enabled():
+            self._draw_clean_speed(state, speed_value, theme)  # EV6 HUD patch v6
+            if tpms_offset_x:
+                rl.rl_push_matrix()
+                rl.rl_translatef(tpms_offset_x, 0.0, 0.0)
+            try:
+                self._draw_tpms_status(state)
+            finally:
+                if tpms_offset_x:
+                    rl.rl_pop_matrix()
+            return
         self._draw_speed_panel_bg()
         self._draw_text_with_stroke(
             speed_text,
@@ -7152,6 +7451,133 @@ class ClusterUiRenderer:
                 TEXT,
                 anchor="center",
             )
+
+    # ---- EV6 HUD patch v6: clean layout -------------------------------------------------
+    def _clean_text_colors(self, theme):
+        if theme.is_dark:
+            return WHITE, (0, 0, 0), (150, 160, 172)
+        return (26, 30, 36), (246, 247, 249), (92, 100, 110)
+
+    def _draw_clean_speed(self, state: ClusterUiState, speed_value: int, theme) -> None:
+        text_color, stroke, muted = self._clean_text_colors(theme)
+        limit_value = None
+        if state.speed_limit_kph is not None:
+            limit_value = int(round(display_speed(state.speed_limit_kph, self.is_metric)))
+            center = rl.Vector2(82.0, 128.0)
+            rl.draw_circle_v(center, 38.0, rl_color(RED))
+            rl.draw_circle_v(center, 32.0, rl_color(WHITE))
+            limit_text = str(limit_value)
+            self._draw_text(limit_text, 82.0, 129.0, 38.0 if len(limit_text) <= 2 else 31.0, (20, 22, 26), anchor="center")
+        if self._cruise_set_visible(state):
+            color = self._cruise_set_color(state, theme)
+            x, y, w, h = 140.0, 102.0, 156.0, 52.0
+            fill = (0, 0, 0, 110) if theme.is_dark else (255, 255, 255, 200)
+            self._rounded_rect(x, y, w, h, h * 0.5, fill, (*color[:3], 160), 2.0)
+            self._draw_text("SET", x + 22.0, y + h * 0.5, 18, muted, anchor="left")
+            self._draw_text_with_stroke(self._cruise_set_speed_text(state), x + w - 22.0, y + h * 0.5, 34, color,
+                                        stroke, 2, anchor="right")
+        self._draw_clean_slowdown_badge(state, theme)
+        if state.traffic_state in (1, 2):
+            texture = self._traffic_red_texture if state.traffic_state == 1 else self._traffic_green_texture
+            if texture is not None:
+                size = 44.0
+                source = rl.Rectangle(0.0, 0.0, float(texture.width), float(texture.height))
+                dest = rl.Rectangle(338.0 - size * 0.5, 128.0 - size * 0.5, size, size)
+                rl.draw_texture_pro(texture, source, dest, rl.Vector2(0.0, 0.0), 0.0, rl_color(WHITE))
+        speed_color = text_color
+        if limit_value is not None and limit_value > 0 and speed_value > limit_value:
+            speed_color = RED if speed_value >= limit_value + CLEAN_SPEED_OVER_RED_KPH else AMBER
+        self._draw_text_with_stroke(str(speed_value), 175.0, 300.0, 160, speed_color, stroke, 3, anchor="center")
+        self._draw_text("km/h" if self.is_metric else "mph", 175.0, 384.0, 24, muted, anchor="center")
+
+    def _draw_clean_slowdown_badge(self, state: ClusterUiState, theme) -> None:
+        # why openpilot is slowing down (carrotMan desiredSource) or a planned stop
+        _, stroke, muted = self._clean_text_colors(theme)
+        label = None
+        value = None
+        color = AMBER
+        if self._cruise_set_visible(state) and state.cruise_override_kph is not None:
+            source = (state.cruise_override_label or "").strip().lower()
+            label = CLEAN_SLOWDOWN_LABELS_KO.get(source, source[:6]) if self.language == CLUSTER_LANGUAGE_KO else source[:8]
+            value = str(int(round(display_speed(state.cruise_override_kph, self.is_metric))))
+            color = GREEN if state.cruise_override_color_mode == 1 else (196, 160, 255) if state.cruise_override_color_mode == 3 else AMBER
+        elif state.longitudinal_plan_should_stop and state.speed_kph > 3.0:
+            label = "정지 예정" if self.language == CLUSTER_LANGUAGE_KO else "STOP"
+        if not label:
+            return
+        x, y, h = 140.0, 168.0, 40.0
+        label_w, _ = self._measure_text(label, 18, 1.0)
+        value_w = 0.0 if value is None else self._measure_text(value, 26, 1.0)[0] + 12.0
+        w = max(96.0, label_w + value_w + 32.0)
+        fill = (0, 0, 0, 110) if theme.is_dark else (255, 255, 255, 200)
+        self._rounded_rect(x, y, w, h, h * 0.5, fill, (*color[:3], 170), 2.0)
+        self._draw_text(label, x + 16.0, y + h * 0.5, 18, color, anchor="left")
+        if value is not None:
+            self._draw_text_with_stroke(value, x + w - 16.0, y + h * 0.5, 26, color, stroke, 2, anchor="right")
+
+    def _draw_clean_bar(self, center_x: float, value: float, color, value_text: str, label: str) -> None:
+        theme = self._current_theme()
+        _, stroke, muted = self._clean_text_colors(theme)
+        top, bottom, width = SIDE_GAUGE_TOP + 4.0, SIDE_GAUGE_BOTTOM - 4.0, 14.0
+        mid = (top + bottom) * 0.5
+        track = (255, 255, 255, 34) if theme.is_dark else (0, 0, 0, 30)
+        self._rounded_rect(center_x - width * 0.5, top, width, bottom - top, width * 0.5, track)
+        rl.draw_line_ex(rl.Vector2(center_x - 13.0, mid), rl.Vector2(center_x + 13.0, mid), 2.0, rl_color(muted))
+        span = abs(clamp(value, -1.0, 1.0)) * (mid - top)
+        if span >= 1.0:
+            y = mid - span if value > 0.0 else mid
+            self._rounded_rect(center_x - width * 0.5, y, width, span, width * 0.5, color)
+        active = span >= 1.0
+        self._draw_text_with_stroke(value_text, center_x, SIDE_GAUGE_VALUE_Y + 4.0, 18, color if active else muted,
+                                    stroke, 2, anchor="center")
+        self._draw_text(label, center_x, bottom + 20.0, 16, muted, anchor="center")
+
+    def _draw_clean_side_gauges(self, state: ClusterUiState) -> None:
+        theme = self._current_theme()
+        ko = self.language == CLUSTER_LANGUAGE_KO
+        accel = 0.0 if abs(state.accel_mps2) < 0.005 else state.accel_mps2
+        accel_color = GREEN if accel > 0 else RED if accel < 0 else theme.muted
+        self._draw_clean_bar(SIDE_GAUGE_LEFT_CENTER_X, accel / MAX_ACCEL_MPS2, accel_color, f"{accel:+.2f}",
+                             "가속" if ko else "ACCEL")
+        if (
+            state.steering_output is not None
+            and state.steering_output_normalized is not None
+            and state.steering_output_kind is not None
+        ):
+            value = float(state.steering_output)
+            normalized = clamp(float(state.steering_output_normalized), -1.0, 1.0)
+            if state.steering_output_kind == "angle":
+                value_text = f"{value:+.0f}%"
+            else:
+                value_text = f"{normalized * 100.0:+.0f}%" if abs(value) > 999.0 else f"{value:+.0f}"
+            color = BLUE if normalized > 0 else AMBER if normalized < 0 else theme.muted
+            self._draw_clean_bar(SIDE_GAUGE_LEFT_CENTER_X + SIDE_GAUGE_COLUMN_GAP, normalized, color, value_text,
+                                 "조향" if ko else "STEER")
+
+    def _draw_clean_tpms(self, state: ClusterUiState) -> None:
+        tpms = state.tpms
+        pressures = (tpms.fl, tpms.fr, tpms.rl, tpms.rr)
+        if not any(value is not None for value in pressures):
+            return
+        theme = self._current_theme()
+        text_color, stroke, muted = self._clean_text_colors(theme)
+        cx, cy = TPMS_STATUS_CENTER_X, TPMS_STATUS_CAR_CENTER_Y
+        body_w, body_h = 26.0, 52.0
+        outline = (*muted[:3], 230)
+        self._rounded_rect(cx - body_w * 0.5, cy - body_h * 0.5, body_w, body_h, 9.0, (0, 0, 0, 0), outline, 2.0)
+        rl.draw_line_ex(rl.Vector2(cx - body_w * 0.5 + 4.0, cy - 9.0), rl.Vector2(cx + body_w * 0.5 - 4.0, cy - 9.0),
+                        2.0, rl_color(outline))
+        for index, pressure in enumerate(pressures):
+            sx = -1.0 if index in (0, 2) else 1.0
+            sy = -1.0 if index in (0, 1) else 1.0
+            wheel_x = cx + sx * (body_w * 0.5 + 3.0)
+            wheel_y = cy + sy * 15.0
+            low = pressure is not None and pressure < TPMS_LOW_PRESSURE_PSI
+            wheel_color = RED if low else outline
+            rl.draw_line_ex(rl.Vector2(wheel_x, wheel_y - 7.0), rl.Vector2(wheel_x, wheel_y + 7.0), 4.0, rl_color(wheel_color))
+            value_text = "--" if pressure is None else f"{pressure:.0f}"
+            value_color = RED if low else (text_color if pressure is not None else muted)
+            self._draw_text_with_stroke(value_text, cx + sx * 44.0, wheel_y, 19, value_color, stroke, 2, anchor="center")
 
     def _draw_driving_mode_indicator(self, state: ClusterUiState) -> None:
         style = SPEED_DRIVING_MODE_STYLES.get(state.driving_mode)
@@ -7278,6 +7704,9 @@ class ClusterUiRenderer:
         return GREEN
 
     def _draw_accel_block(self, state: ClusterUiState) -> None:
+        if clean_ui_enabled():
+            self._draw_clean_side_gauges(state)  # EV6 HUD patch v6
+            return
         theme = self._current_theme()
         top = SIDE_GAUGE_TOP
         bottom = SIDE_GAUGE_BOTTOM
@@ -7343,6 +7772,8 @@ class ClusterUiRenderer:
             )
 
     def _draw_steering_output_block(self, state: ClusterUiState) -> None:
+        if clean_ui_enabled():
+            return  # EV6 HUD patch v6: drawn by _draw_clean_side_gauges
         theme = self._current_theme()
         gauge_center_x = SIDE_GAUGE_LEFT_CENTER_X + SIDE_GAUGE_COLUMN_GAP
         top = SIDE_GAUGE_TOP
