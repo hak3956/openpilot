@@ -447,6 +447,7 @@ CLEAN_CUTIN_MODEL_HOLD_S = 6.0  # ...and keep showing it with the same car model
 CLEAN_TTC_AMBER_S = 4.0  # EV6 HUD patch v6: lead label turns amber / red while closing in
 CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v8: clean planned path, see cluster_scene.clean_planned_path_strips
+# EV6 HUD patch v9: device display off with the HUD connected, see selfdrive/ui/ui_state.Device
 CLEAN_TURN_SHOW_M = 1000  # EV6 HUD patch v7: turn card appears this far before the turn
 CLEAN_TURN_NEAR_M = 100  # ...and turns amber this close
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
