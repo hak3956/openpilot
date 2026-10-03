@@ -446,6 +446,9 @@ CLEAN_CUTIN_HOLD_S = 1.5  # EV6 HUD patch v6: keep a cut-in car orange this long
 CLEAN_CUTIN_MODEL_HOLD_S = 6.0  # ...and keep showing it with the same car model this long
 CLEAN_TTC_AMBER_S = 4.0  # EV6 HUD patch v6: lead label turns amber / red while closing in
 CLEAN_TTC_RED_S = 2.5
+CLEAN_TURN_SHOW_M = 1000  # EV6 HUD patch v7: turn card appears this far before the turn
+CLEAN_TURN_NEAR_M = 100  # ...and turns amber this close
+CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
     "bump": "방지턱", "school": "어린이", "police": "경찰", "road": "도로제한", "route": "경로",
@@ -7476,7 +7479,9 @@ class ClusterUiRenderer:
             self._draw_text("SET", x + 22.0, y + h * 0.5, 18, muted, anchor="left")
             self._draw_text_with_stroke(self._cruise_set_speed_text(state), x + w - 22.0, y + h * 0.5, 34, color,
                                         stroke, 2, anchor="right")
-        self._draw_clean_slowdown_badge(state, theme)
+        chip_x = self._draw_clean_slowdown_badge(state, theme) or 140.0
+        self._draw_clean_safety_chip(state, theme, chip_x)  # EV6 HUD patch v7
+        self._draw_clean_turn_card(state, theme)
         if state.traffic_state in (1, 2):
             texture = self._traffic_red_texture if state.traffic_state == 1 else self._traffic_green_texture
             if texture is not None:
@@ -7514,6 +7519,100 @@ class ClusterUiRenderer:
         self._draw_text(label, x + 16.0, y + h * 0.5, 18, color, anchor="left")
         if value is not None:
             self._draw_text_with_stroke(value, x + w - 16.0, y + h * 0.5, 26, color, stroke, 2, anchor="right")
+        return x + w + 10.0
+
+    @staticmethod
+    def _clean_distance_text(distance_m: float) -> str:
+        if distance_m >= 10000:
+            return f"{distance_m / 1000.0:.0f} km"
+        if distance_m >= 1000:
+            return f"{distance_m / 1000.0:.1f} km"
+        return f"{int(round(distance_m / 10.0) * 10)} m"
+
+    @staticmethod
+    def _clean_turn_subtitle(guidance) -> str:
+        main = guidance.main_text or ""
+        start = main.find("'")
+        end = main.find("'", start + 1) if start >= 0 else -1
+        if start >= 0 and end > start + 1 and "방면" in main[end:]:
+            return main[start + 1:end] + " 방면"
+        for text in (guidance.near_direction, guidance.road_name, main):
+            if text:
+                return text if len(text) <= 18 else text[:17] + "…"
+        return ""
+
+    def _draw_clean_progress(self, x: float, y: float, w: float, progress: float, color, muted) -> None:
+        self._rounded_rect(x, y, w, 3.0, 1.5, (*muted[:3], 70))
+        if progress > 0.01:
+            self._rounded_rect(x, y, w * min(1.0, progress), 3.0, 1.5, (*color[:3], 230))
+
+    def _draw_clean_turn_card(self, state: ClusterUiState, theme) -> None:
+        # EV6 HUD patch v7: next turn from carrot navi, shown only within CLEAN_TURN_SHOW_M
+        navi = state.navi_live
+        guidance = navi.current if navi is not None else None
+        if guidance is None or not 0 < guidance.distance_m <= CLEAN_TURN_SHOW_M:
+            return
+        text_color, stroke, muted = self._clean_text_colors(theme)
+        subtitle = self._clean_turn_subtitle(guidance)
+        distance = self._clean_distance_text(guidance.distance_m)
+        distance_w, _ = self._measure_text(distance, 34, 1.0)
+        subtitle_w = self._measure_text(subtitle, 18, 1.0)[0] if subtitle else 0.0
+        w, h = 100.0 + max(distance_w, subtitle_w), 72.0
+        x, y = self._center_clock_x(self._effective_screen_mode(state)) - w * 0.5, 12.0
+        near = guidance.distance_m <= CLEAN_TURN_NEAR_M
+        edge = AMBER if near else BLUE
+        fill = (0, 0, 0, 120) if theme.is_dark else (255, 255, 255, 215)
+        self._rounded_rect(x, y, w, h, 18.0, fill, (*edge[:3], 170), 2.0)
+        self._draw_navi_turn_icon(guidance.turn_type, x + 38.0, y + h * 0.5, 50.0)
+        self._draw_text_with_stroke(distance, x + 74.0, y + (24.0 if subtitle else h * 0.5), 34,
+                                    AMBER if near else text_color, stroke, 2, anchor="left")
+        if subtitle:
+            self._draw_text(subtitle, x + 74.0, y + 54.0, 18, muted, anchor="left")
+        self._draw_clean_progress(x + 18.0, y + h - 5.0, w - 36.0,
+                                  1.0 - guidance.distance_m / CLEAN_TURN_SHOW_M, edge, muted)
+
+    def _draw_clean_safety_chip(self, state: ClusterUiState, theme, x: float) -> None:
+        # EV6 HUD patch v7: speed camera distance, otherwise section control remaining distance + average speed
+        navi = state.navi_live
+        speed = navi.speed if navi is not None else None
+        if speed is None:
+            return
+        text_color, stroke, muted = self._clean_text_colors(theme)
+        sub = None
+        camera_m = speed.sdi_distance_m
+        if camera_m is not None and 0 < camera_m <= CLEAN_CAMERA_SHOW_M and (speed.sdi_speed_limit_kph or 0) > 0:
+            over = state.speed_kph - speed.sdi_speed_limit_kph
+            label = "카메라" if self.language == CLUSTER_LANGUAGE_KO else "CAM"
+            value = self._clean_distance_text(camera_m)
+            color = RED if over >= CLEAN_SPEED_OVER_RED_KPH else AMBER if over > 0 else BLUE
+            progress = 1.0 - camera_m / CLEAN_CAMERA_SHOW_M
+        elif speed.section_active and (speed.section_remaining_distance_m or 0) > 0:
+            limit = speed.section_speed_limit_kph or 0
+            average = speed.section_average_kph or 0.0
+            label = "구간" if self.language == CLUSTER_LANGUAGE_KO else "SECTION"
+            value = self._clean_distance_text(speed.section_remaining_distance_m)
+            if average > 0.0:
+                sub = f"평균 {average:.0f}" if self.language == CLUSTER_LANGUAGE_KO else f"avg {average:.0f}"
+            color = RED if limit and average >= limit + CLEAN_SPEED_OVER_RED_KPH else AMBER if limit and average > limit else None
+            progress = speed.section_progress or 0.0
+        else:
+            return
+        y, h = 168.0, 40.0
+        label_w, _ = self._measure_text(label, 18, 1.0)
+        value_w, _ = self._measure_text(value, 24, 1.0)
+        sub_w = self._measure_text(sub, 20, 1.0)[0] + 22.0 if sub else 0.0
+        w = 42.0 + label_w + value_w + sub_w + 16.0
+        edge = muted if color is None else color
+        fill = (0, 0, 0, 110) if theme.is_dark else (255, 255, 255, 200)
+        self._rounded_rect(x, y, w, h, h * 0.5, fill, (*edge[:3], 170), 2.0)
+        self._draw_text(label, x + 16.0, y + h * 0.5, 18, muted, anchor="left")
+        self._draw_text_with_stroke(value, x + 26.0 + label_w, y + h * 0.5, 24, text_color, stroke, 2, anchor="left")
+        if sub:
+            sx = x + 36.0 + label_w + value_w
+            rl.draw_line_ex(rl.Vector2(sx, y + 11.0), rl.Vector2(sx, y + h - 11.0), 1.5, rl_color(muted, 140))
+            self._draw_text_with_stroke(sub, sx + 12.0, y + h * 0.5, 20, text_color if color is None else color,
+                                        stroke, 2, anchor="left")
+        self._draw_clean_progress(x + 18.0, y + h - 5.0, w - 36.0, progress, edge, muted)
 
     def _draw_clean_bar(self, center_x: float, value: float, color, value_text: str, label: str) -> None:
         theme = self._current_theme()
