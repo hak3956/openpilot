@@ -446,6 +446,7 @@ CLEAN_CUTIN_HOLD_S = 1.5  # EV6 HUD patch v6: keep a cut-in car orange this long
 CLEAN_CUTIN_MODEL_HOLD_S = 6.0  # ...and keep showing it with the same car model this long
 CLEAN_TTC_AMBER_S = 4.0  # EV6 HUD patch v6: lead label turns amber / red while closing in
 CLEAN_TTC_RED_S = 2.5
+# EV6 HUD patch v8: clean planned path, see cluster_scene.clean_planned_path_strips
 CLEAN_TURN_SHOW_M = 1000  # EV6 HUD patch v7: turn card appears this far before the turn
 CLEAN_TURN_NEAR_M = 100  # ...and turns amber this close
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera

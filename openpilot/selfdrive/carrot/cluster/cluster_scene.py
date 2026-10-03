@@ -1566,6 +1566,8 @@ def planned_path_strips(
     theme: ClusterTheme = LIGHT_CLUSTER_THEME,
     profile_add: ProfileAdd | None = None,
 ) -> tuple[MeshStrip, ...]:
+    if clean_ui_enabled():
+        return clean_planned_path_strips(state, lane_width_m, blockers, theme)  # EV6 HUD patch v8
     profile_stage = profile_scene_start(profile_add)
     points = model_path_centerline(state, lane_width_m, blockers)
     model_driven = bool(points)
@@ -3091,6 +3093,88 @@ def clean_ui_enabled() -> bool:
     return _clean_ui_cache[1]
 
 
+CLEAN_PATH_RAIL_GAP_M = 1.6  # EV6 HUD patch v8: distance between the two rails
+CLEAN_PATH_RAIL_WIDTH_M = 0.14
+CLEAN_PATH_SOLID_M = 15.0  # fully opaque up to here, then fades out towards PATH_END_M
+CLEAN_PATH_FADE_STEP_M = 5.0
+CLEAN_PATH_BRAKE_MPS2 = -1.5  # whole path turns amber when the plan brakes this hard
+
+
+def _clean_path_pieces(points: tuple[Vec3, ...]) -> list[tuple[tuple[Vec3, ...], float]]:
+    # split a polyline at CLEAN_PATH_SOLID_M and every CLEAN_PATH_FADE_STEP_M after it -> (piece, opacity)
+    cuts = [CLEAN_PATH_SOLID_M]
+    while cuts[-1] < PATH_END_M:
+        cuts.append(cuts[-1] + CLEAN_PATH_FADE_STEP_M)
+    pieces: list[tuple[tuple[Vec3, ...], float]] = []
+    current = [points[0]]
+    cut_index = 0
+    for prev, point in zip(points, points[1:], strict=False):
+        while cut_index < len(cuts) and prev.y < cuts[cut_index] <= point.y:
+            t = (cuts[cut_index] - prev.y) / max(1e-6, point.y - prev.y)
+            split = Vec3(prev.x + (point.x - prev.x) * t, cuts[cut_index], prev.z + (point.z - prev.z) * t)
+            current.append(split)
+            pieces.append((tuple(current), 0.0))
+            current = [split]
+            cut_index += 1
+        current.append(point)
+    pieces.append((tuple(current), 0.0))
+    span = max(1.0, PATH_END_M - CLEAN_PATH_SOLID_M)
+    result = []
+    for piece, _ in pieces:
+        if len(piece) < 2:
+            continue
+        mid_y = (piece[0].y + piece[-1].y) * 0.5
+        opacity = 1.0 if mid_y <= CLEAN_PATH_SOLID_M else clamp(1.0 - (mid_y - CLEAN_PATH_SOLID_M) / span, 0.0, 1.0)
+        if opacity > 0.02:
+            result.append((piece, opacity))
+    return result
+
+
+def clean_planned_path_strips(
+    state: ClusterUiState,
+    lane_width_m: float,
+    blockers: tuple[PathBlocker, ...],
+    theme: ClusterTheme = LIGHT_CLUSTER_THEME,
+) -> tuple[MeshStrip, ...]:
+    points = model_path_centerline(state, lane_width_m, blockers)
+    if not points:
+        end_m = planned_path_end_m(state, blockers)
+        steps = max(4, int(PLANNED_PATH_FALLBACK_STEPS * (end_m - PATH_START_M) / (PATH_END_M - PATH_START_M)))
+        points = tuple(
+            Vec3(road_world_x(planned_path_lane_offset(state, forward_m), forward_m, state.steering, lane_width_m),
+                 forward_m, PATH_HEIGHT_M)
+            for forward_m in sample_range(PATH_START_M, end_m, steps)
+        )
+    if len(points) < 2:
+        return ()
+    end_m = model_path_end_m(state, lane_width_m, blockers)
+    last, before = points[-1], points[-2]
+    if end_m is not None and last.y < end_m - 0.05 and last.y - before.y > 1e-3:
+        # model points are sparse: run the last segment on to the stop point (lead car's rear bumper)
+        t = (end_m - last.y) / (last.y - before.y)
+        points = (*points, Vec3(last.x + (last.x - before.x) * t, end_m, last.z))
+    accels = [point.accel_mps2 for point in state.model_path[:8] if point.accel_mps2 is not None]
+    if accels and min(accels) <= CLEAN_PATH_BRAKE_MPS2:
+        rgb = AMBER[:3]
+    else:
+        rgb = (90, 160, 255) if theme.is_dark else (40, 120, 235)
+    floor_alpha = 70 if theme.is_dark else 45
+    outline = strip_from_centerline(points, CLEAN_PATH_RAIL_GAP_M, (0, 0, 0, 0))
+    strips: list[MeshStrip] = []
+    layers = (
+        (points, CLEAN_PATH_RAIL_GAP_M, floor_alpha, PATH_SHADOW_LAYER_M),
+        (outline.left, CLEAN_PATH_RAIL_WIDTH_M, 240, PATH_BODY_LAYER_M),
+        (outline.right, CLEAN_PATH_RAIL_WIDTH_M, 240, PATH_BODY_LAYER_M),
+    )
+    for line, width_m, alpha, height_m in layers:
+        line = tuple(Vec3(point.x, point.y, height_m) for point in line)
+        for piece, opacity in _clean_path_pieces(line):
+            strips.append(strip_from_centerline(piece, width_m, (rgb[0], rgb[1], rgb[2], int(alpha * opacity))))
+    marker_points = model_path_centerline(state, lane_width_m, ()) if blockers else points
+    strips.extend(follow_distance_marker_strips(state, marker_points or points, lane_width_m))
+    return tuple(strips)
+
+
 def road_edge_3d_layers(
     color: Color,
     theme: ClusterTheme = LIGHT_CLUSTER_THEME,
@@ -3774,7 +3858,8 @@ def build_cluster_scene(
         detected_blockers = tuple(
             PathBlocker(
                 clamp(detected.lateral_m / lane_width_m, -2.2, 2.2),
-                render_scene_forward_m(detected.longitudinal_m, state),
+                render_scene_forward_m(detected.longitudinal_m, state)
+                + (VEHICLE_LENGTH_M * 0.5 if clean_ui_enabled() and detected.longitudinal_m > 0.0 else 0.0),  # EV6 HUD patch v8
                 VEHICLE_LENGTH_M,
             )
             for detected in blocking_detected_vehicles
