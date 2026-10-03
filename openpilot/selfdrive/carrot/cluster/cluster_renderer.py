@@ -448,8 +448,7 @@ CLEAN_TTC_AMBER_S = 4.0  # EV6 HUD patch v6: lead label turns amber / red while 
 CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v8: clean planned path, see cluster_scene.clean_planned_path_strips
 # EV6 HUD patch v9: device display off with the HUD connected, see selfdrive/ui/ui_state.Device
-CLEAN_TURN_SHOW_M = 1000  # EV6 HUD patch v7: turn card appears this far before the turn
-CLEAN_TURN_NEAR_M = 100  # ...and turns amber this close
+# EV6 HUD patch v10: upstream H.264 bitrate, no navigation turn card
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
@@ -7483,7 +7482,6 @@ class ClusterUiRenderer:
                                         stroke, 2, anchor="right")
         chip_x = self._draw_clean_slowdown_badge(state, theme) or 140.0
         self._draw_clean_safety_chip(state, theme, chip_x)  # EV6 HUD patch v7
-        self._draw_clean_turn_card(state, theme)
         if state.traffic_state in (1, 2):
             texture = self._traffic_red_texture if state.traffic_state == 1 else self._traffic_green_texture
             if texture is not None:
@@ -7531,47 +7529,10 @@ class ClusterUiRenderer:
             return f"{distance_m / 1000.0:.1f} km"
         return f"{int(round(distance_m / 10.0) * 10)} m"
 
-    @staticmethod
-    def _clean_turn_subtitle(guidance) -> str:
-        main = guidance.main_text or ""
-        start = main.find("'")
-        end = main.find("'", start + 1) if start >= 0 else -1
-        if start >= 0 and end > start + 1 and "방면" in main[end:]:
-            return main[start + 1:end] + " 방면"
-        for text in (guidance.near_direction, guidance.road_name, main):
-            if text:
-                return text if len(text) <= 18 else text[:17] + "…"
-        return ""
-
     def _draw_clean_progress(self, x: float, y: float, w: float, progress: float, color, muted) -> None:
         self._rounded_rect(x, y, w, 3.0, 1.5, (*muted[:3], 70))
         if progress > 0.01:
             self._rounded_rect(x, y, w * min(1.0, progress), 3.0, 1.5, (*color[:3], 230))
-
-    def _draw_clean_turn_card(self, state: ClusterUiState, theme) -> None:
-        # EV6 HUD patch v7: next turn from carrot navi, shown only within CLEAN_TURN_SHOW_M
-        navi = state.navi_live
-        guidance = navi.current if navi is not None else None
-        if guidance is None or not 0 < guidance.distance_m <= CLEAN_TURN_SHOW_M:
-            return
-        text_color, stroke, muted = self._clean_text_colors(theme)
-        subtitle = self._clean_turn_subtitle(guidance)
-        distance = self._clean_distance_text(guidance.distance_m)
-        distance_w, _ = self._measure_text(distance, 34, 1.0)
-        subtitle_w = self._measure_text(subtitle, 18, 1.0)[0] if subtitle else 0.0
-        w, h = 100.0 + max(distance_w, subtitle_w), 72.0
-        x, y = self._center_clock_x(self._effective_screen_mode(state)) - w * 0.5, 12.0
-        near = guidance.distance_m <= CLEAN_TURN_NEAR_M
-        edge = AMBER if near else BLUE
-        fill = (0, 0, 0, 120) if theme.is_dark else (255, 255, 255, 215)
-        self._rounded_rect(x, y, w, h, 18.0, fill, (*edge[:3], 170), 2.0)
-        self._draw_navi_turn_icon(guidance.turn_type, x + 38.0, y + h * 0.5, 50.0)
-        self._draw_text_with_stroke(distance, x + 74.0, y + (24.0 if subtitle else h * 0.5), 34,
-                                    AMBER if near else text_color, stroke, 2, anchor="left")
-        if subtitle:
-            self._draw_text(subtitle, x + 74.0, y + 54.0, 18, muted, anchor="left")
-        self._draw_clean_progress(x + 18.0, y + h - 5.0, w - 36.0,
-                                  1.0 - guidance.distance_m / CLEAN_TURN_SHOW_M, edge, muted)
 
     def _draw_clean_safety_chip(self, state: ClusterUiState, theme, x: float) -> None:
         # EV6 HUD patch v7: speed camera distance, otherwise section control remaining distance + average speed
