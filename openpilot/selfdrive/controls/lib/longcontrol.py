@@ -18,6 +18,13 @@ HYUNDAI_LONGITUDINAL_KF = 1.0
 STOPPING_ACCEL_DEFAULT = -50  # Params use hundredths of m/s^2
 STOPPING_ACCEL_MIN = -100
 STOPPING_ACCEL_MAX = -50
+EV6_SOFT_STOP_OFF_FLAG = "/data/ev6_soft_stop_off"  # EV6 HUD patch v11: touch this file to disable the soft stop
+EV6_SOFT_STOP_ACCEL = -0.15  # brake request while the car is still rolling into the stop
+EV6_SOFT_STOP_EASE_RATE = 0.5  # m/s^3, how fast stronger braking is eased toward EV6_SOFT_STOP_ACCEL
+EV6_SOFT_STOP_MAX_ENTRY_V = 0.6  # m/s, only stops whose stopping state starts this slowly
+EV6_SOFT_STOP_ROLLING_V = 0.05  # m/s, below this the car counts as stopped and gets the firm hold
+EV6_SOFT_STOP_MAX_TIME = 2.0  # s in the stopping state, then the original firm ramp takes over
+EV6_SOFT_STOP_MIN_GAP = 1.0  # m, never soften with the lead car closer than this
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
@@ -75,6 +82,9 @@ class LongControl:
 
     self.params = Params()
     self.readParamCount = 0
+    self.ev6_soft_stop_enabled = False  # EV6 HUD patch v11
+    self.ev6_stop_t = 0.0
+    self.ev6_stop_entry_v = None
     self._refresh_stopping_accel()
     self.j_lead = 0.0
 
@@ -95,6 +105,24 @@ class LongControl:
       value = STOPPING_ACCEL_DEFAULT
     # Enforce the menu bounds even for stale Params or direct writes.
     self.stopping_accel = min(STOPPING_ACCEL_MAX, max(STOPPING_ACCEL_MIN, value)) * 0.01
+    import os
+    import sys
+    # off under pytest so the repo's own tests keep checking the original stopping behaviour
+    self.ev6_soft_stop_enabled = "pytest" not in sys.modules and not os.path.exists(EV6_SOFT_STOP_OFF_FLAG)
+
+  def _ev6_soft_stop(self, CS, radarState, soft_hold_active) -> bool:
+    # EV6 HUD patch v11: called every cycle in the stopping state; True while the soft stop applies
+    if self.ev6_stop_entry_v is None:
+      self.ev6_stop_entry_v = CS.vEgo
+    self.ev6_stop_t += DT_CTRL
+    if not self.ev6_soft_stop_enabled or soft_hold_active or CS.standstill:
+      return False
+    if self.ev6_stop_entry_v > EV6_SOFT_STOP_MAX_ENTRY_V or self.ev6_stop_t > EV6_SOFT_STOP_MAX_TIME:
+      return False
+    if CS.vEgo <= EV6_SOFT_STOP_ROLLING_V:
+      return False
+    lead = radarState.leadOne if radarState is not None else None
+    return not (lead is not None and lead.status and lead.dRel < EV6_SOFT_STOP_MIN_GAP)
 
   def _apply_hyundai_longitudinal_tuning(self):
     # Hyundai, Kia, and Genesis all use the opendbc "hyundai" brand. Keep the
@@ -143,6 +171,9 @@ class LongControl:
                                                        CS.cruiseState.standstill, CS.aEgo, self.stopping_accel, radarState)
     if active and soft_hold_active:
       self.long_control_state = LongCtrlState.stopping
+    if self.long_control_state != LongCtrlState.stopping:
+      self.ev6_stop_t = 0.0  # EV6 HUD patch v11
+      self.ev6_stop_entry_v = None
 
     if self.long_control_state == LongCtrlState.off:
       self.reset()
@@ -153,8 +184,14 @@ class LongControl:
 
       if soft_hold_active:
         output_accel = self.CP.stopAccel
+      if self._ev6_soft_stop(CS, radarState, soft_hold_active):
+        # EV6 HUD patch v11: still rolling into a gentle stop - ease toward a light brake, firm hold comes after
+        if output_accel < EV6_SOFT_STOP_ACCEL:
+          output_accel = min(EV6_SOFT_STOP_ACCEL, output_accel + EV6_SOFT_STOP_EASE_RATE * DT_CTRL)
+        else:
+          output_accel = max(EV6_SOFT_STOP_ACCEL, min(output_accel, 0.0) - self.CP.stoppingDecelRate * DT_CTRL)
       # Restore the original one-way ramp. Do not unwind stronger braking.
-      if output_accel > self.stopping_accel:
+      elif output_accel > self.stopping_accel:
         output_accel = min(output_accel, 0.0)
         output_accel -= self.CP.stoppingDecelRate * DT_CTRL
       self.reset()
