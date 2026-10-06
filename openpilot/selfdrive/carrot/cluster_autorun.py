@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import faulthandler
 import locale
 import os
 import select
@@ -47,6 +48,46 @@ ENCODER_NAMES = {
     ENCODER_SOFTWARE: "software",
 }
 USB_DISCONNECT_TEXT = ("usb display disconnected", "no such device", "device has been disconnected")
+# EV6 HUD patch v12: freeze watchdog + faster reconnect
+EV6_USB_RETRY_S = 1.0  # retry delay after a USB display disconnect (RETRY_INTERVAL_S for other failures)
+EV6_WATCHDOG_OFF_FLAG = "/data/ev6_hud_watchdog_off"
+EV6_WATCHDOG_LOG = "/data/ev6_hud_watchdog.log"
+EV6_WATCHDOG_LOG_MAX_BYTES = 512 * 1024
+EV6_WATCHDOG_STARTUP_S = 90.0  # time allowed from starting the HUD to its first frame
+
+
+def _ev6_watchdog_open():
+    if os.path.exists(EV6_WATCHDOG_OFF_FLAG) or not os.path.isdir(os.path.dirname(EV6_WATCHDOG_LOG)):
+        print("[cluster_autorun] EV6 HUD freeze watchdog off", flush=True)
+        return None
+    try:
+        too_big = os.path.getsize(EV6_WATCHDOG_LOG) > EV6_WATCHDOG_LOG_MAX_BYTES
+    except OSError:
+        too_big = False
+    try:
+        out = open(EV6_WATCHDOG_LOG, "w" if too_big else "a", encoding="utf-8")
+        out.write(f"\n=== cluster_autorun pid {os.getpid()} started {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+        out.flush()
+    except OSError as exc:
+        print(f"[cluster_autorun] EV6 HUD freeze watchdog unavailable: {exc}", flush=True)
+        return None
+    print(f"[cluster_autorun] EV6 HUD freeze watchdog on (stack dump: {EV6_WATCHDOG_LOG})", flush=True)
+    return out
+
+
+def _ev6_watchdog_attach(out) -> None:
+    if out is None:
+        return
+    try:
+        import main as cluster_main_module
+
+        if not hasattr(cluster_main_module, "ev6_watchdog_kick"):
+            raise RuntimeError(f"{cluster_main_module.__file__} has no EV6 watchdog hook")
+        cluster_main_module.EV6_WATCHDOG_OUT = out
+    except Exception as exc:
+        print(f"[cluster_autorun] EV6 HUD freeze watchdog not attached: {exc}", flush=True)
+        return
+    faulthandler.dump_traceback_later(EV6_WATCHDOG_STARTUP_S, exit=True, file=out)
 
 
 def _configure_autorun_locale() -> None:
@@ -540,6 +581,7 @@ def main() -> None:
     scheduler.update(False, force=True)
     params = Params()
     params.put_bool_nonblocking("ClusterHudConnected", False)
+    ev6_watchdog_out = _ev6_watchdog_open()  # EV6 HUD patch v12
     while True:
         scheduler.update(False, force=True)
         hud_mode = _read_hud_mode(params)
@@ -588,12 +630,17 @@ def main() -> None:
         else:
             print(f"[cluster_autorun] found {product_label(expected_product_id)}; starting cluster HUD", flush=True)
 
+        retry_s = RETRY_INTERVAL_S
         try:
-            _run_cluster_once(
-                hud_mode,
-                encoder_mode,
-                usbgpu_active=params.get_bool(USBGPU_ACTIVE_PARAM),
-            )
+            _ev6_watchdog_attach(ev6_watchdog_out)  # EV6 HUD patch v12
+            try:
+                _run_cluster_once(
+                    hud_mode,
+                    encoder_mode,
+                    usbgpu_active=params.get_bool(USBGPU_ACTIVE_PARAM),
+                )
+            finally:
+                faulthandler.cancel_dump_traceback_later()
             next_hud_mode = _read_hud_mode(params)
             next_encoder_mode = _read_encoder_mode(params)
             next_orientation = _read_orientation(params)
@@ -616,8 +663,9 @@ def main() -> None:
             )
         except Exception as exc:
             if _is_usb_disconnect_error(exc):
+                retry_s = EV6_USB_RETRY_S  # EV6 HUD patch v12: the panel usually re-enumerates within a second
                 print(
-                    f"[cluster_autorun] USB display disconnected; retrying in {RETRY_INTERVAL_S:.0f}s",
+                    f"[cluster_autorun] USB display disconnected; retrying in {retry_s:.0f}s",
                     flush=True,
                 )
             else:
@@ -626,7 +674,7 @@ def main() -> None:
                     flush=True,
                 )
                 traceback.print_exc()
-        time.sleep(RETRY_INTERVAL_S)
+        time.sleep(retry_s)
 
 
 if __name__ == "__main__":

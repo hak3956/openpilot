@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import gc
 import os
 from dataclasses import replace
@@ -607,6 +608,28 @@ def align_dimension(value: int, alignment: int) -> int:
     return ((value + alignment - 1) // alignment) * alignment
 
 
+# EV6 HUD patch v12: freeze watchdog. cluster_autorun sets EV6_WATCHDOG_OUT (an open log file) when enabled;
+# the render loop re-arms faulthandler's timer, so a loop that stops for EV6_WATCHDOG_STALL_S dumps every
+# thread's stack to that file and exits the process for the manager to restart.
+EV6_WATCHDOG_OUT = None
+EV6_WATCHDOG_STALL_S = 15.0
+EV6_WATCHDOG_SHUTDOWN_S = 30.0
+EV6_WATCHDOG_KICK_INTERVAL_S = 1.0
+_ev6_watchdog_next_kick = 0.0
+
+
+def ev6_watchdog_kick(timeout_s: float | None = None, force: bool = False) -> None:
+    global _ev6_watchdog_next_kick
+    out = EV6_WATCHDOG_OUT
+    if out is None:
+        return
+    now = time.monotonic()
+    # every re-arm restarts faulthandler's timer thread, so re-arm at most once a second
+    if force or now >= _ev6_watchdog_next_kick:
+        faulthandler.dump_traceback_later(EV6_WATCHDOG_STALL_S if timeout_s is None else timeout_s, exit=True, file=out)
+        _ev6_watchdog_next_kick = now + EV6_WATCHDOG_KICK_INTERVAL_S
+
+
 def run_demo(
     duration_seconds: float | None,
     target_fps: float,
@@ -1123,6 +1146,7 @@ def run_demo(
             if stop_requested:
                 break
             frame_start_time = time.perf_counter()
+            ev6_watchdog_kick()  # EV6 HUD patch v12
             renderer.clear_profile_samples()
             if usb_display is not None and usb_pipeline is None:
                 usb_display.clear_profile_samples()
@@ -1897,6 +1921,7 @@ def run_demo(
                 report_frames = 0
                 last_report_time = now
     finally:
+        ev6_watchdog_kick(EV6_WATCHDOG_SHUTDOWN_S, force=True)  # EV6 HUD patch v12: closing must not hang either
         scheduler.update(False, force=True, child_pid=h264_pipeline.encoder_pid if h264_pipeline is not None else None)
         if signal_installed:
             signal.signal(signal.SIGTERM, previous_sigterm_handler)

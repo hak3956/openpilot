@@ -450,6 +450,7 @@ CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v9: device display off with the HUD connected, see selfdrive/ui/ui_state.Device
 # EV6 HUD patch v10: upstream H.264 bitrate, no navigation turn card
 # EV6 HUD patch v11: soft stop, see selfdrive/controls/lib/longcontrol.py
+# EV6 HUD patch v12: freeze watchdog, see selfdrive/carrot/cluster_autorun.py
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
