@@ -17,6 +17,7 @@ from openpilot.selfdrive.modeld.jetlink.link import (SPEC, SOCKET, STATUS, REQUE
 from openpilot.selfdrive.modeld.jetlink.phase import Publisher as PhasePublisher
 from openpilot.selfdrive.modeld.jetlink.mac import prepare, PreparationDeferred
 from openpilot.selfdrive.modeld.jetlink.compat import ProtocolAttempts
+from openpilot.selfdrive.modeld.jetlink.startup import wait_for_boot_update
 from jetlink.transport.ffs import FfsTransport
 
 GADGET = '/sys/kernel/config/usb_gadget/jetlink'
@@ -264,6 +265,7 @@ def main():
           # Provision before ensure_engine: a new host may need Internet to
           # fetch its first model. This is outside every model frame deadline.
           wifi.send(client, initial=True)
+        wait_for_boot_update(client, peer, wifi, host_attached, publish)
         publish('loading', peer=peer)
         from openpilot.common.params import Params
         params = Params()
