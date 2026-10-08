@@ -451,6 +451,7 @@ CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v10: upstream H.264 bitrate, no navigation turn card
 # EV6 HUD patch v11: soft stop, see selfdrive/controls/lib/longcontrol.py
 # EV6 HUD patch v12: freeze watchdog, see selfdrive/carrot/cluster_autorun.py
+# EV6 HUD patch v13: parked screen, see ClusterUiRenderer._ev6_draw_park_screen
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
@@ -1000,6 +1001,18 @@ def label_rect_inside_bounds(
     if not all(math.isfinite(value) for value in values):
         return False
     return x >= left and y >= top and x + width <= right and y + height <= bottom
+
+
+# EV6 HUD patch v13: parked screen (gear P). The car photo stays on the device, it is not part of the patch.
+EV6_PARK_CAR_IMAGE = "/data/ev6_park_car.png"
+EV6_PARK_SCREEN_OFF_FLAG = "/data/ev6_park_screen_off"
+EV6_PARK_IMAGE_RETRY_S = 5.0
+EV6_PARK_DARK_SHADOW_FROM = 0.72  # dark theme: drop translucent pixels below this share of the photo height (ground shadow)
+EV6_PARK_WEEKDAYS_KO = ("월", "화", "수", "목", "금", "토", "일")
+EV6_PARK_COLORS_LIGHT = dict(bg_top=(246, 247, 249), bg_bot=(222, 225, 230), text=(28, 31, 36), muted=(118, 124, 133),
+                             card=(255, 255, 255), line=(214, 218, 224), accent=(0, 122, 255))
+EV6_PARK_COLORS_DARK = dict(bg_top=(30, 33, 38), bg_bot=(10, 11, 13), text=(236, 238, 241), muted=(140, 146, 155),
+                            card=(30, 33, 38), line=(54, 58, 65), accent=(80, 160, 255))
 
 
 class ClusterUiRenderer:
@@ -1602,6 +1615,10 @@ class ClusterUiRenderer:
 
     def render(self, state: ClusterUiState, signal_lights: tuple[bool, bool] | None = None) -> None:
         """Draw one frame into the currently active raylib render target."""
+        if self._ev6_park_screen_active(state):  # EV6 HUD patch v13: parked screen replaces the road view in P
+            self._ev6_draw_park_screen(state)
+            self._draw_alert_overlay(getattr(state, "alert", None))
+            return
         if signal_lights is None:
             signal_lights = self._turn_signal_lights(state)
         profile_stage = self._profile_start()
@@ -1616,6 +1633,127 @@ class ClusterUiRenderer:
         profile_stage = self._profile_start()
         self._draw_alert_overlay(getattr(state, "alert", None))
         self._profile_add("render.alert", profile_stage)
+
+    # ---- EV6 HUD patch v13: parked screen ----
+    def _ev6_park_screen_active(self, state: ClusterUiState) -> bool:
+        if not clean_ui_enabled() or not getattr(state, "onroad", False):
+            return False
+        if str(getattr(state, "gear_text", "") or "").strip().upper() != "P":
+            return False
+        now = time.monotonic()
+        if now >= getattr(self, "_ev6_park_flag_check_t", 0.0):
+            self._ev6_park_flag_check_t = now + 1.0
+            self._ev6_park_off = os.path.exists(EV6_PARK_SCREEN_OFF_FLAG)
+        return not self._ev6_park_off
+
+    def _ev6_park_car_texture(self, dark: bool):
+        # Loaded lazily from the device; a missing file is retried every few seconds so a copied photo shows up
+        # without restarting the HUD. Dark theme drops the photo's grey ground shadow (it reads as a haze on black).
+        textures = getattr(self, "_ev6_park_textures", None)
+        if textures is None:
+            now = time.monotonic()
+            if now < getattr(self, "_ev6_park_retry_t", 0.0):
+                return None
+            self._ev6_park_retry_t = now + EV6_PARK_IMAGE_RETRY_S
+            path = os.environ.get("EV6_PARK_CAR_IMAGE", EV6_PARK_CAR_IMAGE)
+            if not os.path.isfile(path):
+                return None
+            try:
+                image = rl.load_image(path)
+                if image.width <= 0 or image.height <= 0:
+                    return None
+                rl.image_format(image, rl.PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)
+                dark_image = rl.image_copy(image)
+                pixels = np.frombuffer(rl.ffi.buffer(dark_image.data, dark_image.width * dark_image.height * 4),
+                                       dtype=np.uint8).reshape(dark_image.height, dark_image.width, 4)
+                alpha = pixels[int(dark_image.height * EV6_PARK_DARK_SHADOW_FROM):, :, 3]
+                alpha[alpha < 250] = 0
+                textures = []
+                for img in (image, dark_image):
+                    texture = rl.load_texture_from_image(img)
+                    rl.gen_texture_mipmaps(texture)
+                    rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
+                    textures.append(texture)
+                rl.unload_image(image)
+                rl.unload_image(dark_image)
+            except Exception as exc:
+                print(f"EV6 parked screen: could not load {path}: {exc}", flush=True)
+                return None
+            self._ev6_park_textures = textures
+        return textures[1 if dark else 0]
+
+    @staticmethod
+    def _ev6_park_duration_text(seconds: float) -> str:
+        minutes = int(round(max(0.0, seconds) / 60.0))
+        return f"{minutes // 60}시간 {minutes % 60:02d}분" if minutes >= 60 else f"{minutes}분"
+
+    def _ev6_draw_park_screen(self, state: ClusterUiState) -> None:
+        theme = self._current_theme()
+        colors = EV6_PARK_COLORS_DARK if theme.is_dark else EV6_PARK_COLORS_LIGHT
+        rl.clear_background(rl_color(colors["bg_bot"]))
+        rl.rl_push_matrix()
+        rl.rl_scalef(self.width / DESIGN_WIDTH, self.height / DESIGN_HEIGHT, 1.0)
+        try:
+            rl.draw_rectangle_gradient_v(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT, rl_color(colors["bg_top"]),
+                                         rl_color(colors["bg_bot"]))
+
+            def text(value, x, y, size, color, anchor="left"):
+                self._draw_text(value, x, y, size, colors[color], anchor)
+
+            # left: date, clock, gear
+            now = time.localtime()
+            if self.language == CLUSTER_LANGUAGE_KO:
+                date_text = f"{now.tm_mon}월 {now.tm_mday}일 {EV6_PARK_WEEKDAYS_KO[now.tm_wday]}요일"
+            else:
+                date_text = time.strftime("%a, %b %d", now)
+            text(date_text, 70, 92, 34, "muted")
+            text(time.strftime("%H:%M", now), 64, 170, 108, "text")
+            text("P", 70, 300, 64, "accent")
+            text("주차" if self.language == CLUSTER_LANGUAGE_KO else "Park", 130, 304, 30, "muted")
+
+            # centre: car photo on a soft floor shadow
+            car_cx, car_bottom, car_h = 790.0, 412.0, 350.0
+            for i in range(12):
+                k = 1.0 - i * 0.045
+                rl.draw_ellipse(int(car_cx), int(car_bottom - 10), int(330 * k), int(30 * k),
+                                rl.Color(0, 0, 0, 14 if theme.is_dark else 7))
+            texture = self._ev6_park_car_texture(theme.is_dark)
+            if texture is not None:
+                car_w = car_h * texture.width / max(1, texture.height)
+                rl.draw_texture_pro(texture, rl.Rectangle(0, 0, texture.width, texture.height),
+                                    rl.Rectangle(car_cx - car_w / 2, car_bottom - car_h, car_w, car_h),
+                                    rl.Vector2(0, 0), 0.0, rl.WHITE)
+
+            # tyre pressures, top view
+            tpms = getattr(state, "tpms", None)
+            cx, cy = 1290, 290
+            self._rounded_rect(cx - 24, cy - 52, 48, 104, 16, colors["card"], colors["line"], 2)
+            for key, dx, dy in (("fl", -70, -34), ("fr", 70, -34), ("rl", -70, 34), ("rr", 70, 34)):
+                value = getattr(tpms, key, None) if tpms is not None else None
+                text("--" if value is None or value <= 0 else f"{value:.0f}", cx + dx, cy + dy, 30, "text", "center")
+            text("공기압 (psi)", cx, cy + 86, 22, "muted", "center")
+
+            # right: this trip
+            trip = getattr(state, "trip_report", None)
+            x0, x1 = 1420, 1860
+            text("이번 주행", x0, 70, 30, "muted")
+            rows = (
+                ("거리", f"{trip.distance_m / 1000.0:.1f} km" if trip else "--"),
+                ("시간", self._ev6_park_duration_text(trip.duration_s) if trip else "--"),
+                ("평균", f"{trip.average_speed_kph:.1f} km/h" if trip else "--"),
+                ("자동주행", f"{trip.auto_ratio_percent:.0f} %" if trip else "--"),
+            )
+            for i, (label, value) in enumerate(rows):
+                y = 135 + i * 78
+                text(label, x0, y, 28, "muted")
+                text(value, x1, y, 40, "text", "right")
+                if i < len(rows) - 1:
+                    rl.draw_line_ex(rl.Vector2(x0, y + 39), rl.Vector2(x1, y + 39), 2, rl_color(colors["line"]))
+            if trip:
+                text(f"급가속 {trip.hard_accel_count} · 급감속 {trip.hard_brake_count} · 급코너 {trip.hard_corner_count}",
+                     x0, 445, 24, "muted")
+        finally:
+            rl.rl_pop_matrix()
 
     def _prepare_trip_report_cache(self, state: ClusterUiState, now: float | None = None) -> None:
         """Refresh the expensive trip-report panel outside the active frame target."""
