@@ -453,6 +453,7 @@ CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v12: freeze watchdog, see selfdrive/carrot/cluster_autorun.py
 # EV6 HUD patch v13: parked screen, see ClusterUiRenderer._ev6_draw_park_screen
 # EV6 HUD patch v14: ego EV6 at real size, see cluster_scene.EV6_EGO_LENGTH_M
+# EV6 HUD patch v15: reverse screen, see ClusterUiRenderer._ev6_draw_reverse_screen
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
@@ -1014,6 +1015,21 @@ EV6_PARK_COLORS_LIGHT = dict(bg_top=(246, 247, 249), bg_bot=(222, 225, 230), tex
                              card=(255, 255, 255), line=(214, 218, 224), accent=(0, 122, 255))
 EV6_PARK_COLORS_DARK = dict(bg_top=(30, 33, 38), bg_bot=(10, 11, 13), text=(236, 238, 241), muted=(140, 146, 155),
                             card=(30, 33, 38), line=(54, 58, 65), accent=(80, 160, 255))
+
+# EV6 HUD patch v15: reverse screen (gear R). Kia EV6: wheelbase 2.90 m, steer ratio 16 (opendbc CarSpecs),
+# rear axle 1.44 m and rear bumper 2.34 m behind the body centre.
+EV6_REVERSE_SCREEN_OFF_FLAG = "/data/ev6_reverse_screen_off"
+EV6_REVERSE_CAR_IMAGE = "/data/ev6_reverse_car.png"  # optional replacement for the generated car image (same angle)
+EV6_REVERSE_SPRITE_SUPERSAMPLE = 2
+EV6_REVERSE_STEER_RATIO = 16.0
+EV6_REVERSE_WHEELBASE_M = 2.90
+EV6_REVERSE_REAR_AXLE_Y_M = -1.44
+EV6_REVERSE_REAR_BUMPER_Y_M = -2.34
+EV6_REVERSE_HALF_WIDTH_M = 0.95
+EV6_REVERSE_PATH_LENGTH_M = 5.0
+EV6_REVERSE_PATH_STEPS = 60
+EV6_REVERSE_MARKS = ((1.0, (255, 59, 48)), (2.0, (255, 159, 10)), (3.0, (52, 199, 89)))
+EV6_REVERSE_WARN = (255, 149, 0)
 
 
 class ClusterUiRenderer:
@@ -1620,6 +1636,10 @@ class ClusterUiRenderer:
             self._ev6_draw_park_screen(state)
             self._draw_alert_overlay(getattr(state, "alert", None))
             return
+        if self._ev6_reverse_screen_active(state):  # EV6 HUD patch v15: reversing guide in R
+            self._ev6_draw_reverse_screen(state)
+            self._draw_alert_overlay(getattr(state, "alert", None))
+            return
         if signal_lights is None:
             signal_lights = self._turn_signal_lights(state)
         profile_stage = self._profile_start()
@@ -1756,8 +1776,215 @@ class ClusterUiRenderer:
         finally:
             rl.rl_pop_matrix()
 
+    # ---- EV6 HUD patch v15: reverse screen ----
+    def _ev6_reverse_screen_active(self, state: ClusterUiState) -> bool:
+        if not clean_ui_enabled() or not getattr(state, "onroad", False):
+            return False
+        if str(getattr(state, "gear_text", "") or "").strip().upper() != "R":
+            return False
+        now = time.monotonic()
+        if now >= getattr(self, "_ev6_reverse_flag_check_t", 0.0):
+            self._ev6_reverse_flag_check_t = now + 1.0
+            self._ev6_reverse_off = os.path.exists(EV6_REVERSE_SCREEN_OFF_FLAG)
+        return not self._ev6_reverse_off
+
+    @staticmethod
+    def ev6_reverse_path(steering_angle_deg: float) -> list[tuple[float, float, float]]:
+        # Rear-axle path while reversing (kinematic bicycle model): x right, y forward, heading clockwise from +y.
+        # Positive steering angle = wheel turned left, which swings the rear to the car's left.
+        curvature = math.tan(math.radians(steering_angle_deg / EV6_REVERSE_STEER_RATIO)) / EV6_REVERSE_WHEELBASE_M
+        step = EV6_REVERSE_PATH_LENGTH_M / EV6_REVERSE_PATH_STEPS
+        x, y, heading = 0.0, EV6_REVERSE_REAR_AXLE_Y_M, 0.0
+        points = []
+        for _ in range(EV6_REVERSE_PATH_STEPS + 1):
+            points.append((x, y, heading))
+            x -= math.sin(heading) * step
+            y -= math.cos(heading) * step
+            heading += curvature * step
+        return points
+
+    def _ev6_reverse_camera(self):
+        # top view, car front to the left: screen up = the car's right side
+        camera = rl.Camera3D(rl.Vector3(-2.6, -3.3, 12.5), rl.Vector3(0.0, -3.3, 0.0), rl.Vector3(1.0, 0.0, 0.0),
+                             27.0, rl.CameraProjection.CAMERA_PERSPECTIVE)
+        if self._vehicle_shaders:
+            view_pos = rl.ffi.new("float[]", [camera.position.x, camera.position.y, camera.position.z])
+            for vehicle_shader, view_loc in self._vehicle_shaders:
+                if view_loc >= 0:
+                    rl.set_shader_value(vehicle_shader, view_loc, view_pos, rl.ShaderUniformDataType.SHADER_UNIFORM_VEC3)
+        return camera
+
+    def _ev6_draw_reverse_car_model(self) -> None:
+        from cluster_scene import EV6_EGO_HEIGHT_M, EV6_EGO_LENGTH_M, EV6_EGO_WIDTH_M
+
+        if self._vehicle_model is None:
+            return
+        rl.rl_disable_backface_culling()
+        try:
+            rl.draw_model_ex(self._vehicle_model, rl.Vector3(0.0, 0.0, 0.035), rl.Vector3(0.0, 0.0, 1.0), 0.0,
+                             rl.Vector3(EV6_EGO_WIDTH_M, EV6_EGO_LENGTH_M, EV6_EGO_HEIGHT_M), rl.WHITE)
+        finally:
+            rl.rl_enable_backface_culling()
+
+    def _ev6_prepare_reverse_sprite(self, state: ClusterUiState) -> None:
+        # The first time R is shown, draw the car once with the reverse-screen camera at 2x resolution, crop it and keep
+        # it as a texture: every later frame draws one smooth image instead of the 3D model. Runs before the frame's
+        # render target is bound (nested render targets are not supported). A /data/ev6_reverse_car.png taken from
+        # the same angle replaces the generated image.
+        if getattr(self, "_ev6_reverse_sprite", None) is not None or not self._ev6_reverse_screen_active(state):
+            return
+        if getattr(self, "_vehicle_model", None) is None:
+            return
+        self._ev6_reverse_sprite = False  # one attempt; the 3D model stays as the fallback
+        try:
+            scale = EV6_REVERSE_SPRITE_SUPERSAMPLE
+            width, height = int(self.width * scale), int(self.height * scale)
+            target = rl.load_render_texture(width, height)
+            try:
+                rl.begin_texture_mode(target)
+                rl.clear_background(rl.Color(214, 216, 220, 0))  # light, transparent: no dark fringe when filtered
+                rl.begin_mode_3d(self._ev6_reverse_camera())
+                self._ev6_draw_reverse_car_model()
+                rl.end_mode_3d()
+                rl.end_texture_mode()
+                image = rl.load_image_from_texture(target.texture)
+            finally:
+                rl.unload_render_texture(target)
+            rl.image_flip_vertical(image)
+            rl.image_format(image, rl.PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)
+            alpha = np.frombuffer(rl.ffi.buffer(image.data, image.width * image.height * 4),
+                                  dtype=np.uint8).reshape(image.height, image.width, 4)[..., 3]
+            rows = np.nonzero(alpha.max(axis=1))[0]
+            cols = np.nonzero(alpha.max(axis=0))[0]
+            if len(rows) == 0:
+                rl.unload_image(image)
+                return
+            x0, y0 = int(cols[0]), int(rows[0])
+            crop_w, crop_h = int(cols[-1]) - x0 + 1, int(rows[-1]) - y0 + 1
+            rl.image_crop(image, rl.Rectangle(x0, y0, crop_w, crop_h))
+            if os.path.isfile(EV6_REVERSE_CAR_IMAGE):
+                rl.unload_image(image)
+                image = rl.load_image(EV6_REVERSE_CAR_IMAGE)
+            texture = rl.load_texture_from_image(image)
+            rl.unload_image(image)
+            rl.gen_texture_mipmaps(texture)
+            rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
+            self._ev6_reverse_sprite = (texture, (x0 / scale, y0 / scale, crop_w / scale, crop_h / scale))
+        except Exception as exc:
+            print(f"EV6 reverse screen: car image not generated, drawing the 3D model: {exc}", flush=True)
+
+    def _ev6_draw_reverse_screen(self, state: ClusterUiState) -> None:
+        theme = self._current_theme()
+        dark = theme.is_dark
+        colors = EV6_PARK_COLORS_DARK if dark else EV6_PARK_COLORS_LIGHT
+        rl.clear_background(rl_color(colors["bg_bot"]))
+        sx = self.width / DESIGN_WIDTH
+        sy = self.height / DESIGN_HEIGHT
+        rl.rl_push_matrix()
+        rl.rl_scalef(sx, sy, 1.0)
+        rl.draw_rectangle_gradient_v(0, 0, DESIGN_WIDTH, DESIGN_HEIGHT, rl_color(colors["bg_top"]), rl_color(colors["bg_bot"]))
+        rl.rl_pop_matrix()
+
+        steering_deg = float(getattr(state, "steering_angle_deg", None) or 0.0)
+        left_bsd = bool(getattr(state, "left_blindspot", False))
+        right_bsd = bool(getattr(state, "right_blindspot", False))
+        points = self.ev6_reverse_path(steering_deg)
+        accent = colors["accent"]
+        warn = EV6_REVERSE_WARN
+
+        camera = self._ev6_reverse_camera()
+        sprite = getattr(self, "_ev6_reverse_sprite", None)
+
+        def side(point, offset, z):
+            px, py, heading = point
+            return rl.Vector3(px + math.cos(heading) * offset, py - math.sin(heading) * offset, z)
+
+        def quad(a, b, c, d, color):
+            for tri in ((a, b, c), (a, c, d), (a, c, b), (a, d, c)):  # both windings: no culling surprises
+                rl.draw_triangle_3d(*tri, color)
+
+        half_w = EV6_REVERSE_HALF_WIDTH_M
+        rl.begin_mode_3d(camera)
+        try:
+            fill = rl.Color(*accent, 46 if dark else 34)
+            for a, b in zip(points, points[1:]):
+                quad(side(a, -half_w, 0.01), side(a, half_w, 0.01), side(b, half_w, 0.01), side(b, -half_w, 0.01), fill)
+            line = rl.Color(*accent, 230)
+            for offset in (-half_w, half_w):
+                for a, b in zip(points, points[1:]):
+                    quad(side(a, offset - 0.07, 0.02), side(a, offset + 0.07, 0.02),
+                         side(b, offset + 0.07, 0.02), side(b, offset - 0.07, 0.02), line)
+            for distance_m, color in EV6_REVERSE_MARKS:
+                point = points[self._ev6_reverse_mark_index(distance_m)]
+                ahead_x, ahead_y = -math.sin(point[2]) * 0.12, -math.cos(point[2]) * 0.12
+                a, b = side(point, -half_w - 0.05, 0.03), side(point, half_w + 0.05, 0.03)
+                quad(a, b, rl.Vector3(b.x + ahead_x, b.y + ahead_y, 0.03), rl.Vector3(a.x + ahead_x, a.y + ahead_y, 0.03),
+                     rl.Color(*color, 235))
+            for active, sign in ((right_bsd, 1.0), (left_bsd, -1.0)):
+                if not active:
+                    continue
+                for i in range(6):  # amber band fading outward along that side of the car
+                    inner = sign * (1.15 + i * 0.12)
+                    outer = sign * (1.27 + i * 0.12)
+                    quad(rl.Vector3(inner, 2.2, 0.01), rl.Vector3(outer, 2.2, 0.01), rl.Vector3(outer, -2.5, 0.01),
+                         rl.Vector3(inner, -2.5, 0.01), rl.Color(*warn, int(170 * (1 - i / 6))))
+            if not sprite:
+                self._ev6_draw_reverse_car_model()  # fallback until the car image exists
+        finally:
+            rl.end_mode_3d()
+        if sprite:
+            texture, (car_x, car_y, car_w, car_h) = sprite
+            rl.draw_texture_pro(texture, rl.Rectangle(0, 0, texture.width, texture.height),
+                                rl.Rectangle(car_x, car_y, car_w, car_h), rl.Vector2(0, 0), 0.0, rl.WHITE)
+
+        mark_labels = []
+        for distance_m, _color in EV6_REVERSE_MARKS:
+            point = points[self._ev6_reverse_mark_index(distance_m)]
+            screen = rl.get_world_to_screen_ex(side(point, -half_w - 0.45, 0.0), camera, int(self.width), int(self.height))
+            mark_labels.append((f"{distance_m:.0f}m", screen.x / sx, screen.y / sy))
+
+        rl.rl_push_matrix()
+        rl.rl_scalef(sx, sy, 1.0)
+        try:
+            def text(value, x, y, size, color, anchor="left"):
+                self._draw_text(value, x, y, size, colors[color] if isinstance(color, str) else color, anchor)
+
+            for label, x, y in mark_labels:
+                text(label, x, y, 24, "muted", "center")
+            korean = self.language == CLUSTER_LANGUAGE_KO
+            text("R", 70, 150, 140, "text")
+            text("후진" if korean else "Reverse", 190, 180, 34, "muted")
+            text(f"{abs(float(getattr(state, 'speed_kph', 0.0) or 0.0)):.0f}", 70, 330, 84, "text")
+            text("km/h", 150 if abs(float(getattr(state, 'speed_kph', 0.0) or 0.0)) < 9.5 else 190, 350, 30, "muted")
+
+            x0, x1 = 1500, 1860
+            if abs(steering_deg) < 5.0:
+                steer_text = "가운데" if korean else "Centre"
+            elif korean:
+                steer_text = f"{'왼쪽' if steering_deg > 0 else '오른쪽'} {abs(steering_deg):.0f}°"
+            else:
+                steer_text = f"{'Left' if steering_deg > 0 else 'Right'} {abs(steering_deg):.0f}°"
+            text("핸들" if korean else "Wheel", x0, 110, 28, "muted")
+            text(steer_text, x1, 110, 40, "text", "right")
+            rl.draw_line_ex(rl.Vector2(x0, 150), rl.Vector2(x1, 150), 2, rl_color(colors["line"]))
+            text("후측방" if korean else "Blind spot", x0, 200, 28, "muted")
+            for i, (label, active) in enumerate((("좌" if korean else "L", left_bsd), ("우" if korean else "R", right_bsd))):
+                cx = 1700 + i * 130
+                rl.draw_circle(cx, 200, 14, rl_color(warn if active else colors["line"]))
+                text(label, cx + 26, 200, 28, "text" if active else "muted")
+            text("후방 카메라와 주변을 함께 확인하세요" if korean else "Check the rear camera and surroundings",
+                 x0, 420, 24, "muted")
+        finally:
+            rl.rl_pop_matrix()
+
+    @staticmethod
+    def _ev6_reverse_mark_index(distance_m: float) -> int:
+        travelled = distance_m + EV6_REVERSE_REAR_AXLE_Y_M - EV6_REVERSE_REAR_BUMPER_Y_M  # metres behind the bumper
+        return max(0, min(EV6_REVERSE_PATH_STEPS, int(round(travelled / EV6_REVERSE_PATH_LENGTH_M * EV6_REVERSE_PATH_STEPS))))
+
     def _prepare_trip_report_cache(self, state: ClusterUiState, now: float | None = None) -> None:
         """Refresh the expensive trip-report panel outside the active frame target."""
+        self._ev6_prepare_reverse_sprite(state)  # EV6 HUD patch v15: reverse-screen car image, also outside the frame
         if self._effective_screen_mode(state) != CLUSTER_SCREEN_MODE_TRIP_REPORT:
             self._trip_report_cache_visible = False
             return
