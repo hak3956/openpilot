@@ -3077,6 +3077,21 @@ CLEAN_UI_CLASSIC_FLAG = "/data/ev6_hud_classic"  # EV6 HUD patch v6
 _clean_ui_cache = [-10.0, True]
 
 
+# EV6 HUD patch v14: Kia EV6 body 4.68 x 1.88 x 1.55 m. The ego model (cybertruck_cluster.obj) is normalised to a unit
+# box whose width includes the mirrors (body 0.878, mirrors 0.959) and whose height is 1.065, so scale to match.
+EV6_EGO_LENGTH_M = 4.68
+EV6_EGO_WIDTH_M = 1.88 / 0.878
+EV6_EGO_HEIGHT_M = 1.55 / 1.065
+
+
+def ev6_ego_vehicle_box(box: VehicleBox) -> VehicleBox:
+    # keep the front bumper where it was (the path, lead distance and radar overlay are measured from it)
+    back = (EV6_EGO_LENGTH_M - box.length_m) * 0.5
+    center = Vec3(box.center.x - box.forward_x * back, box.center.y - box.forward_y * back,
+                  box.center.z + (EV6_EGO_HEIGHT_M - box.height_m) * 0.5)
+    return replace(box, center=center, width_m=EV6_EGO_WIDTH_M, length_m=EV6_EGO_LENGTH_M, height_m=EV6_EGO_HEIGHT_M)
+
+
 def clean_ui_enabled() -> bool:
     now = time.monotonic()
     if now - _clean_ui_cache[0] > 2.0:
@@ -3799,6 +3814,8 @@ def build_cluster_scene(
         camera_active,
         target_offset,
     )
+    if clean_ui_enabled():
+        ego_vehicle = ev6_ego_vehicle_box(ego_vehicle)  # EV6 HUD patch v14
     show_ego_vehicle = not cluster_camera_view_is_road_camera(state.camera_view_mode)
     merged_radar_labels = frozenset[str]()
     if route_mode:
