@@ -454,6 +454,7 @@ CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v13: parked screen, see ClusterUiRenderer._ev6_draw_park_screen
 # EV6 HUD patch v14: ego EV6 at real size, see cluster_scene.EV6_EGO_LENGTH_M
 # EV6 HUD patch v15: reverse screen, see ClusterUiRenderer._ev6_draw_reverse_screen
+# EV6 HUD patch v16: parked screen polish (dark shadow, top-view car for the tyre pressures)
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
@@ -1687,8 +1688,11 @@ class ClusterUiRenderer:
                 dark_image = rl.image_copy(image)
                 pixels = np.frombuffer(rl.ffi.buffer(dark_image.data, dark_image.width * dark_image.height * 4),
                                        dtype=np.uint8).reshape(dark_image.height, dark_image.width, 4)
-                alpha = pixels[int(dark_image.height * EV6_PARK_DARK_SHADOW_FROM):, :, 3]
-                alpha[alpha < 250] = 0
+                # EV6 HUD patch v16: keep the photo's ground shadow but make it black (grey reads as haze on black)
+                floor = pixels[int(dark_image.height * EV6_PARK_DARK_SHADOW_FROM):]
+                shadow = floor[..., 3] < 250
+                floor[shadow, :3] = 0
+                floor[shadow, 3] = (floor[shadow, 3] * 0.85).astype(np.uint8)
                 textures = []
                 for img in (image, dark_image):
                     texture = rl.load_texture_from_image(img)
@@ -1702,6 +1706,23 @@ class ClusterUiRenderer:
                 return None
             self._ev6_park_textures = textures
         return textures[1 if dark else 0]
+
+    def _ev6_draw_top_view_car(self, cx: float, cy: float, dark: bool, colors: dict) -> None:
+        # EV6 HUD patch v16: small top-view car (front up) for the tyre pressures, instead of a plain box
+        tyre = rl_color((88, 92, 100) if dark else (70, 74, 82))
+        glass = rl_color((70, 76, 86) if dark else (92, 100, 112))
+        body = rl_color(colors["card"])
+        for sx in (-1, 1):
+            for sy in (-1, 1):  # wheels peek out at the four corners, next to their pressure value
+                rl.draw_rectangle_rounded(rl.Rectangle(cx + sx * 25 - 5, cy + sy * 31 - 11, 10, 22), 0.6, 6, tyre)
+            rl.draw_ellipse(int(cx + sx * 27), int(cy - 15), 5, 3, body)  # mirrors
+        self._rounded_rect(cx - 24, cy - 54, 48, 108, 22, colors["card"], colors["line"], 2)
+        # windscreen, roof and rear window
+        rl.draw_triangle(rl.Vector2(cx - 18, cy - 24), rl.Vector2(cx - 15, cy - 9), rl.Vector2(cx + 18, cy - 24), glass)
+        rl.draw_triangle(rl.Vector2(cx + 18, cy - 24), rl.Vector2(cx - 15, cy - 9), rl.Vector2(cx + 15, cy - 9), glass)
+        rl.draw_rectangle_rounded(rl.Rectangle(cx - 15, cy - 6, 30, 30), 0.25, 6, rl_color(colors["line"]))
+        rl.draw_triangle(rl.Vector2(cx - 15, cy + 27), rl.Vector2(cx - 17, cy + 37), rl.Vector2(cx + 15, cy + 27), glass)
+        rl.draw_triangle(rl.Vector2(cx + 15, cy + 27), rl.Vector2(cx - 17, cy + 37), rl.Vector2(cx + 17, cy + 37), glass)
 
     @staticmethod
     def _ev6_park_duration_text(seconds: float) -> str:
@@ -1737,7 +1758,7 @@ class ClusterUiRenderer:
             for i in range(12):
                 k = 1.0 - i * 0.045
                 rl.draw_ellipse(int(car_cx), int(car_bottom - 10), int(330 * k), int(30 * k),
-                                rl.Color(0, 0, 0, 14 if theme.is_dark else 7))
+                                rl.Color(0, 0, 0, 8 if theme.is_dark else 7))
             texture = self._ev6_park_car_texture(theme.is_dark)
             if texture is not None:
                 car_w = car_h * texture.width / max(1, texture.height)
@@ -1748,7 +1769,7 @@ class ClusterUiRenderer:
             # tyre pressures, top view
             tpms = getattr(state, "tpms", None)
             cx, cy = 1290, 290
-            self._rounded_rect(cx - 24, cy - 52, 48, 104, 16, colors["card"], colors["line"], 2)
+            self._ev6_draw_top_view_car(cx, cy, theme.is_dark, colors)
             for key, dx, dy in (("fl", -70, -34), ("fr", 70, -34), ("rl", -70, 34), ("rr", 70, 34)):
                 value = getattr(tpms, key, None) if tpms is not None else None
                 text("--" if value is None or value <= 0 else f"{value:.0f}", cx + dx, cy + dy, 30, "text", "center")
