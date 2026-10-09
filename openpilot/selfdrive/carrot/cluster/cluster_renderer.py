@@ -6,7 +6,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import lru_cache
 import base64
+import json  # EV6 HUD patch v17
 import math
+import threading  # EV6 HUD patch v17
 import os
 import time
 import zlib
@@ -455,6 +457,7 @@ CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v14: ego EV6 at real size, see cluster_scene.EV6_EGO_LENGTH_M
 # EV6 HUD patch v15: reverse screen, see ClusterUiRenderer._ev6_draw_reverse_screen
 # EV6 HUD patch v16: parked screen polish (dark shadow, top-view car for the tyre pressures)
+# EV6 HUD patch v17: parked-screen weather, see Ev6Weather
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
@@ -1031,6 +1034,154 @@ EV6_REVERSE_PATH_LENGTH_M = 5.0
 EV6_REVERSE_PATH_STEPS = 60
 EV6_REVERSE_MARKS = ((1.0, (255, 59, 48)), (2.0, (255, 159, 10)), (3.0, (52, 199, 89)))
 EV6_REVERSE_WARN = (255, 149, 0)
+
+# EV6 HUD patch v17: weather on the parked screen from Open-Meteo (free, no API key). A daemon thread fetches while the
+# parked screen is in use (at most every 10 min), never in the render loop; the last result is cached in /data so it
+# survives restarts and garages without signal. Location: openpilot's LastGPSPosition, rounded to ~1 km.
+EV6_WEATHER_OFF_FLAG = "/data/ev6_weather_off"
+EV6_WEATHER_CACHE = "/data/ev6_weather_cache.json"
+EV6_WEATHER_REFRESH_S = 600.0
+EV6_WEATHER_RETRY_S = 120.0
+EV6_WEATHER_MAX_AGE_S = 3600.0
+EV6_WEATHER_IDLE_S = 900.0  # stop fetching this long after the parked screen was last shown
+EV6_DUST_GRADES = (("좋음", (38, 166, 91)), ("보통", (255, 159, 10)), ("나쁨", (255, 59, 48)), ("매우나쁨", (175, 82, 222)))
+
+
+def ev6_weather_kind(code: int) -> tuple[str, str]:
+    # WMO weather codes -> (icon, Korean label)
+    if code == 0:
+        return "clear", "맑음"
+    if code in (1, 2):
+        return "partly", "구름조금"
+    if code in (45, 48):
+        return "cloudy", "안개"
+    if code in (71, 73, 75, 77, 85, 86):
+        return "snow", "눈"
+    if 51 <= code <= 67 or 80 <= code <= 82:
+        return "rain", "비"
+    if code >= 95:
+        return "rain", "뇌우"
+    return "cloudy", "흐림"
+
+
+def ev6_dust_grade(pm10: float | None, pm25: float | None) -> int | None:
+    # Korean grades (Ministry of Environment): the worse of PM10 and PM2.5
+    grades = []
+    if pm10 is not None:
+        grades.append(0 if pm10 <= 30 else 1 if pm10 <= 80 else 2 if pm10 <= 150 else 3)
+    if pm25 is not None:
+        grades.append(0 if pm25 <= 15 else 1 if pm25 <= 35 else 2 if pm25 <= 75 else 3)
+    return max(grades) if grades else None
+
+
+def ev6_weather_from_response(forecast: dict, air: dict | None) -> dict:
+    current, daily = forecast.get("current", {}), forecast.get("daily", {})
+    kind, label = ev6_weather_kind(int(current.get("weather_code", 3)))
+    first = lambda key: (daily.get(key) or [None])[0]  # noqa: E731
+    day_kind, day_label = ev6_weather_kind(int(first("weather_code") or 0))
+    chance = first("precipitation_probability_max")
+    # rain / snow chance only when it is raining or snowing, or forecast for today
+    if kind in ("rain", "snow") and chance is not None:
+        label = f"{label} {chance:.0f}%"
+    elif day_kind in ("rain", "snow") and chance is not None and chance >= 30:
+        label = f"오늘 {day_label} {chance:.0f}%"  # the icon still shows the current sky
+    air_now = (air or {}).get("current", {})
+    return dict(kind=kind, label=label, temp=float(current.get("temperature_2m", 0.0)), max=first("temperature_2m_max"),
+                min=first("temperature_2m_min"), dust=ev6_dust_grade(air_now.get("pm10"), air_now.get("pm2_5")))
+
+
+class Ev6Weather:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._data: dict | None = None
+        self._data_time = 0.0  # unix time of the last successful fetch
+        self._wanted_until = 0.0
+        self._thread = None
+        self._loaded_cache = False
+
+    def snapshot(self) -> dict | None:
+        if os.path.exists(EV6_WEATHER_OFF_FLAG):
+            return None
+        self._wanted_until = time.monotonic() + EV6_WEATHER_IDLE_S
+        if not self._loaded_cache:
+            self._loaded_cache = True
+            self._load_cache()
+        if self._thread is None and not os.environ.get("EV6_WEATHER_NO_FETCH"):
+            self._thread = threading.Thread(target=self._run, name="ev6-weather", daemon=True)
+            self._thread.start()
+        with self._lock:
+            if self._data is None or time.time() - self._data_time > EV6_WEATHER_MAX_AGE_S:
+                return None
+            return self._data
+
+    def set(self, data: dict, data_time: float | None = None) -> None:
+        with self._lock:
+            self._data, self._data_time = data, time.time() if data_time is None else data_time
+
+    def _load_cache(self) -> None:
+        try:
+            with open(EV6_WEATHER_CACHE, encoding="utf-8") as f:
+                cached = json.load(f)
+            self.set(cached["data"], float(cached["time"]))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _position() -> tuple[float, float] | None:
+        try:
+            from openpilot.common.params import Params
+            for params in (Params("/dev/shm/params"), Params()):
+                raw = params.get("LastGPSPosition")
+                if raw:
+                    pos = json.loads(raw)
+                    return round(float(pos["latitude"]), 2), round(float(pos["longitude"]), 2)
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _get_json(url: str) -> dict:
+        import urllib.request
+        with urllib.request.urlopen(url, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _run(self) -> None:
+        next_fetch = 0.0
+        while True:
+            time.sleep(5.0)
+            now = time.monotonic()
+            if now > self._wanted_until or now < next_fetch or os.path.exists(EV6_WEATHER_OFF_FLAG):
+                continue
+            position = self._position()
+            if position is None:
+                next_fetch = now + EV6_WEATHER_RETRY_S
+                continue
+            lat, lon = position
+            try:
+                forecast = self._get_json(
+                    "https://api.open-meteo.com/v1/forecast"
+                    f"?latitude={lat}&longitude={lon}&timezone=auto&forecast_days=1"
+                    "&current=temperature_2m,weather_code"
+                    "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max")
+                try:
+                    air = self._get_json("https://air-quality-api.open-meteo.com/v1/air-quality"
+                                         f"?latitude={lat}&longitude={lon}&current=pm10,pm2_5")
+                except Exception:
+                    air = None
+                data = ev6_weather_from_response(forecast, air)
+                self.set(data)
+                try:
+                    with open(EV6_WEATHER_CACHE, "w", encoding="utf-8") as f:
+                        json.dump({"time": time.time(), "data": data}, f)
+                except OSError:
+                    pass
+                next_fetch = now + EV6_WEATHER_REFRESH_S
+            except Exception as exc:
+                print(f"EV6 weather: fetch failed: {exc}", flush=True)
+                next_fetch = now + EV6_WEATHER_RETRY_S
+
+
+EV6_WEATHER = Ev6Weather()
 
 
 class ClusterUiRenderer:
@@ -1724,6 +1875,52 @@ class ClusterUiRenderer:
         rl.draw_triangle(rl.Vector2(cx - 15, cy + 27), rl.Vector2(cx - 17, cy + 37), rl.Vector2(cx + 15, cy + 27), glass)
         rl.draw_triangle(rl.Vector2(cx + 15, cy + 27), rl.Vector2(cx - 17, cy + 37), rl.Vector2(cx + 17, cy + 37), glass)
 
+    def _ev6_draw_weather(self, weather: dict, colors: dict, dark: bool, text) -> None:
+        # EV6 HUD patch v17: [icon] 18°  맑음 / 최고 21°  최저 12°  ● 미세먼지 좋음
+        self._ev6_draw_weather_icon(weather["kind"], 100, 272, 62, dark)
+        text(f"{weather['temp']:.0f}°", 150, 272, 52, "text")
+        text(weather["label"], 262, 276, 30, "text")
+        line = []
+        if weather.get("max") is not None and weather.get("min") is not None:
+            line.append(f"최고 {weather['max']:.0f}°  최저 {weather['min']:.0f}°")
+        text("  ".join(line), 70, 330, 22, "muted")
+        if weather.get("dust") is not None:
+            label, color = EV6_DUST_GRADES[weather["dust"]]
+            rl.draw_circle(262, 330, 7, rl_color(color))
+            text(f"미세먼지 {label}", 278, 330, 22, "muted")
+
+    @staticmethod
+    def _ev6_draw_weather_icon(kind: str, cx: float, cy: float, s: float, dark: bool) -> None:
+        sun = rl.Color(255, 184, 0, 255)
+        cloud = rl.Color(*((208, 213, 220) if dark else (176, 184, 194)), 255)
+        cloud_hi = rl.Color(*((236, 238, 241) if dark else (214, 219, 226)), 255)
+
+        def cloud_at(x, y, k, color):
+            rl.draw_circle(int(x - 0.30 * k), int(y + 0.05 * k), 0.26 * k, color)
+            rl.draw_circle(int(x + 0.02 * k), int(y - 0.12 * k), 0.34 * k, color)
+            rl.draw_circle(int(x + 0.34 * k), int(y + 0.06 * k), 0.24 * k, color)
+            rl.draw_rectangle_rounded(rl.Rectangle(x - 0.56 * k, y + 0.02 * k, 1.14 * k, 0.30 * k), 1.0, 8, color)
+
+        if kind in ("clear", "partly"):
+            sx, sy, r = (cx, cy, 0.36 * s) if kind == "clear" else (cx - 0.18 * s, cy - 0.16 * s, 0.26 * s)
+            for i in range(8):
+                a = i * math.pi / 4
+                rl.draw_line_ex(rl.Vector2(sx + math.cos(a) * r * 1.35, sy + math.sin(a) * r * 1.35),
+                                rl.Vector2(sx + math.cos(a) * r * 1.75, sy + math.sin(a) * r * 1.75), 0.07 * s, sun)
+            rl.draw_circle(int(sx), int(sy), r, sun)
+            if kind == "partly":
+                cloud_at(cx + 0.10 * s, cy + 0.12 * s, s * 0.85, cloud_hi)
+            return
+        cloud_at(cx, cy - 0.08 * s, s, cloud)
+        if kind == "rain":
+            for i in range(3):
+                x = cx - 0.30 * s + i * 0.30 * s
+                rl.draw_line_ex(rl.Vector2(x + 0.06 * s, cy + 0.36 * s), rl.Vector2(x - 0.04 * s, cy + 0.56 * s), 0.07 * s,
+                                rl.Color(64, 156, 255, 255))
+        elif kind == "snow":
+            for i in range(3):
+                rl.draw_circle(int(cx - 0.30 * s + i * 0.30 * s), int(cy + 0.48 * s), 0.07 * s, rl.Color(170, 205, 255, 255))
+
     @staticmethod
     def _ev6_park_duration_text(seconds: float) -> str:
         minutes = int(round(max(0.0, seconds) / 60.0))
@@ -1750,8 +1947,13 @@ class ClusterUiRenderer:
                 date_text = time.strftime("%a, %b %d", now)
             text(date_text, 70, 92, 34, "muted")
             text(time.strftime("%H:%M", now), 64, 170, 108, "text")
-            text("P", 70, 300, 64, "accent")
-            text("주차" if self.language == CLUSTER_LANGUAGE_KO else "Park", 130, 304, 30, "muted")
+            weather = EV6_WEATHER.snapshot()  # EV6 HUD patch v17: Open-Meteo weather, fetched in the background
+            gear_y = 300
+            if weather is not None:
+                self._ev6_draw_weather(weather, colors, theme.is_dark, text)
+                gear_y = 400
+            text("P", 70, gear_y, 64, "accent")
+            text("주차" if self.language == CLUSTER_LANGUAGE_KO else "Park", 130, gear_y + 4, 30, "muted")
 
             # centre: car photo on a soft floor shadow
             car_cx, car_bottom, car_h = 790.0, 412.0, 350.0
