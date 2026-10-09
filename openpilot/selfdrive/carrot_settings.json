@@ -581,17 +581,6 @@
                 "RecordRoadCam",
                 "MaxTimeOffroadMin"
               ]
-            },
-            {
-              "id": "SYS_YOUTUBE",
-              "ko": "YouTube 라이브",
-              "en": "YouTube Live",
-              "zh": "YouTube Live",
-              "params": [
-                "CarrotYouTubeLive",
-                "CarrotYouTubeQuality",
-                "CarrotYouTubeTimestamp"
-              ]
             }
           ]
         },
@@ -1289,15 +1278,16 @@
       "group": "주행튜닝",
       "name": "LongTuningKpV",
       "title": "Long KpV(100)x0.01",
-      "descr": "롱컨 비례게인(오차 즉각 반응). 현대·기아·제네시스는 안전상 Kp 1.0으로 고정되며 이 설정이 표시되거나 적용되지 않습니다.",
+      "descr": "롱컨 비례게인(오차 즉각 반응). 현대·기아·제네시스는 안전상 Kp 1.0으로 고정되며 이 설정이 표시되거나 적용되지 않습니다. 토요타·렉서스는 전용 제어기의 보정을 중복하지 않도록 공통 Kp=0으로 고정되며 이 설정을 숨기고 저장값을 적용하지 않습니다.",
       "egroup": "LONG",
       "etitle": "Long KpV(100)x0.01",
-      "edescr": "Longitudinal proportional gain for immediate error response. Hyundai, Kia, and Genesis are fixed at Kp 1.0 for safety, so this setting is hidden and ignored on those vehicles.",
+      "edescr": "Longitudinal proportional gain for immediate error response. Hyundai, Kia, and Genesis are fixed at Kp 1.0 for safety, so this setting is hidden and ignored on those vehicles. Toyota/Lexus fix the common Kp=0 to avoid duplicate correction before their dedicated controller; this setting is hidden and saved values are ignored.",
       "cgroup": "纵向控制",
       "ctitle": "纵向 KpV(100)x0.01",
-      "cdescr": "纵向控制比例增益。现代、起亚和捷尼赛思车型为确保安全固定为 Kp 1.0，因此不会显示或应用此设置。",
+      "cdescr": "纵向控制比例增益。现代、起亚和捷尼赛思车型为确保安全固定为 Kp 1.0，因此不会显示或应用此设置。 丰田/雷克萨斯的通用 Kp=0 固定，以避免与专用控制器重复补偿；此设置隐藏且不应用保存值。",
       "hidden_brands": [
-        "hyundai"
+        "hyundai",
+        "toyota"
       ],
       "min": 0,
       "max": 200,
@@ -1308,15 +1298,16 @@
       "group": "주행튜닝",
       "name": "LongTuningKf",
       "title": "Long Kf(100)x0.01",
-      "descr": "목표 가속도를 가속과 감속 양쪽에 미리 반영하는 피드포워드입니다. 현대·기아·제네시스는 안전상 Kf 1.0으로 고정되며 이 설정이 표시되거나 적용되지 않습니다.",
+      "descr": "목표 가속도를 가속과 감속 양쪽에 미리 반영하는 피드포워드입니다. 현대·기아·제네시스는 안전상 Kf 1.0으로 고정되며 이 설정이 표시되거나 적용되지 않습니다. 토요타·렉서스는 전용 제어기의 보정을 중복하지 않도록 공통 Kf=1으로 고정되며 이 설정을 숨기고 저장값을 적용하지 않습니다.",
       "egroup": "LONG",
       "etitle": "Long Kf(100)x0.01",
-      "edescr": "Feeds target acceleration forward in both acceleration and braking directions. Hyundai, Kia, and Genesis are fixed at Kf 1.0 for safety, so this setting is hidden and ignored on those vehicles.",
+      "edescr": "Feeds target acceleration forward in both acceleration and braking directions. Hyundai, Kia, and Genesis are fixed at Kf 1.0 for safety, so this setting is hidden and ignored on those vehicles. Toyota/Lexus fix the common Kf=1 to avoid duplicate correction before their dedicated controller; this setting is hidden and saved values are ignored.",
       "cgroup": "纵向控制",
       "ctitle": "纵向 Kf(100)x0.01",
-      "cdescr": "在加速和制动方向预先应用目标加速度。现代、起亚和捷尼赛思车型为确保安全固定为 Kf 1.0，因此不会显示或应用此设置。",
+      "cdescr": "在加速和制动方向预先应用目标加速度。现代、起亚和捷尼赛思车型为确保安全固定为 Kf 1.0，因此不会显示或应用此设置。 丰田/雷克萨斯的通用 Kf=1 固定，以避免与专用控制器重复补偿；此设置隐藏且不应用保存值。",
       "hidden_brands": [
-        "hyundai"
+        "hyundai",
+        "toyota"
       ],
       "min": 0,
       "max": 200,
@@ -1327,15 +1318,16 @@
       "group": "주행튜닝",
       "name": "LongTuningKiV",
       "title": "Long KiV(0)x0.01",
-      "descr": "롱컨 적분게인(누적오차 보정)입니다. 현대·기아·제네시스는 안전상 Ki 0으로 고정되며 이 설정이 표시되거나 적용되지 않습니다.",
+      "descr": "롱컨 적분게인(누적오차 보정)입니다. 현대·기아·제네시스는 안전상 Ki 0으로 고정되며 이 설정이 표시되거나 적용되지 않습니다. 토요타·렉서스는 전용 제어기의 보정을 중복하지 않도록 공통 Ki=0으로 고정되며 이 설정을 숨기고 저장값을 적용하지 않습니다.",
       "egroup": "LONG",
       "etitle": "Long KiV(0)x0.01",
-      "edescr": "Longitudinal integral gain for accumulated error correction. Hyundai, Kia, and Genesis are fixed at Ki 0 for safety, so this setting is hidden and ignored on those vehicles.",
+      "edescr": "Longitudinal integral gain for accumulated error correction. Hyundai, Kia, and Genesis are fixed at Ki 0 for safety, so this setting is hidden and ignored on those vehicles. Toyota/Lexus fix the common Ki=0 to avoid duplicate correction before their dedicated controller; this setting is hidden and saved values are ignored.",
       "cgroup": "纵向控制",
       "ctitle": "纵向 KiV(0)x0.01",
-      "cdescr": "纵向控制积分增益。现代、起亚和捷尼赛思车型为确保安全固定为 Ki 0，因此不会显示或应用此设置。",
+      "cdescr": "纵向控制积分增益。现代、起亚和捷尼赛思车型为确保安全固定为 Ki 0，因此不会显示或应用此设置。 丰田/雷克萨斯的通用 Ki=0 固定，以避免与专用控制器重复补偿；此设置隐藏且不应用保存值。",
       "hidden_brands": [
-        "hyundai"
+        "hyundai",
+        "toyota"
       ],
       "min": 0,
       "max": 2000,
@@ -1818,54 +1810,6 @@
       "unit": 1
     },
     {
-      "group": "SYS_YOUTUBE",
-      "name": "CarrotYouTubeLive",
-      "title": "YouTube 송출",
-      "descr": "주행 중 선택한 카메라 영상을 YouTube Live로 송출합니다.\n0: 끄기, 1: 켜기",
-      "egroup": "System",
-      "etitle": "YouTube Live",
-      "edescr": "Stream the selected driving camera to YouTube Live.\n0: OFF, 1: ON",
-      "cgroup": "System",
-      "ctitle": "YouTube Live",
-      "cdescr": "Stream the selected driving camera to YouTube Live.\n0: OFF, 1: ON",
-      "min": 0,
-      "max": 1,
-      "default": 0,
-      "unit": 1
-    },
-    {
-      "group": "SYS_YOUTUBE",
-      "name": "CarrotYouTubeQuality",
-      "title": "YouTube 화질",
-      "descr": "송출 영상\n0: 저화질 (데이터 절약)\n1: 중화질 (기본 전방)\n2: 고화질 (선명한 전방)\n3: 광각 (넓은 시야)",
-      "egroup": "System",
-      "etitle": "YouTube Quality",
-      "edescr": "Stream video\n0: Low (data saving)\n1: Medium (front)\n2: High (clear front)\n3: Wide (wide view)",
-      "cgroup": "System",
-      "ctitle": "YouTube Quality",
-      "cdescr": "Stream video\n0: Low (data saving)\n1: Medium (front)\n2: High (clear front)\n3: Wide (wide view)",
-      "min": 0,
-      "max": 3,
-      "default": 0,
-      "unit": 1
-    },
-    {
-      "group": "SYS_YOUTUBE",
-      "name": "CarrotYouTubeTimestamp",
-      "title": "YouTube 시간 자막",
-      "descr": "영상 재인코딩 없이 현재 시간을 CEA-608/708 자막으로 송출합니다. 송출 시작 전에 Live Control Room의 스트림 설정 > 자막에서 '내장 608/708'을 선택해야 합니다. 종료된 영상의 수정 화면에서는 설정할 수 없습니다.\n0: 끄기, 1: 켜기",
-      "egroup": "System",
-      "etitle": "YouTube Time Caption",
-      "edescr": "Send the current time as embedded CEA-608/708 captions without re-encoding video. Before streaming, select Embedded 608/708 under Live Control Room > Stream settings > Captions. It cannot be enabled from the completed video's edit page.\n0: OFF, 1: ON",
-      "cgroup": "System",
-      "ctitle": "YouTube Time Caption",
-      "cdescr": "Send the current time as embedded CEA-608/708 captions without re-encoding video. Before streaming, select Embedded 608/708 under Live Control Room > Stream settings > Captions. It cannot be enabled from the completed video's edit page.\n0: OFF, 1: ON",
-      "min": 0,
-      "max": 1,
-      "default": 0,
-      "unit": 1
-    },
-    {
       "group": "시작",
       "name": "HDPuse",
       "title": "HDP 사용(CCNC)",
@@ -1917,13 +1861,13 @@
       "group": "시작",
       "name": "SpeedFromPCM",
       "title": "PCM차량속도제어",
-      "descr": "PCM(비롱컨)속도제어방법\n0:커브/카메라 감속+롱컨\n1:버튼스패밍안함(순정SCC)\n2:커브/카메라 감속\n3: Honda/Toyota",
+      "descr": "PCM 차량의 속도 제어 방식\n0:커브/카메라 감속+롱컨\n1:순정 설정속도 사용·버튼스패밍 안 함\n2:커브/카메라 감속\n3:Honda/Toyota (토요타·렉서스는 순정 설정속도 사용, 가감속 모드 전환 아님)",
       "egroup": "START",
       "etitle": "Speed from PCM(StockSCC)",
-      "edescr": "0: Curve/Camera Deceleration + Long, 1: No Button Spamming (Stock SCC), 2: Curve/Camera Decel, 3: Honda/Toyota",
+      "edescr": "PCM vehicle speed control. 0: Curve/Camera Deceleration + Long, 1: Stock set speed without button spamming, 2: Curve/Camera Decel, 3: Honda/Toyota (Toyota/Lexus use stock set speed; does not switch longitudinal mode)",
       "cgroup": "启动设置",
       "ctitle": "来自 PCM 的速度 (原厂 SCC)",
-      "cdescr": "0: 弯道/摄像头减速 + 纵向控制, 1: 无按钮连发 (原厂 SCC), 2: 弯道/摄像头减速, 3: 本田/丰田",
+      "cdescr": "PCM 车辆速度控制。0: 弯道/摄像头减速 + 纵向控制，1: 使用原厂设定速度且不连续发送按钮，2: 弯道/摄像头减速，3: 本田/丰田（丰田/雷克萨斯使用原厂设定速度，不切换纵向控制模式）",
       "min": 0,
       "max": 3,
       "default": 2,
