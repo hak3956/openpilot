@@ -460,6 +460,7 @@ CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v16: parked screen polish (dark shadow, top-view car for the tyre pressures)
 # EV6 HUD patch v17: parked-screen weather, see Ev6Weather
 # EV6 HUD patch v18: parked-screen battery %, see Ev6Battery
+# EV6 HUD patch v19: weather falls back to the last known position
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
@@ -1124,22 +1125,27 @@ class Ev6Weather:
         try:
             with open(EV6_WEATHER_CACHE, encoding="utf-8") as f:
                 cached = json.load(f)
+            if cached.get("pos"):
+                self._last_pos = tuple(cached["pos"])  # EV6 HUD patch v19
             self.set(cached["data"], float(cached["time"]))
         except Exception:
             pass
 
-    @staticmethod
-    def _position() -> tuple[float, float] | None:
+    def _position(self) -> tuple[float, float] | None:
+        # LastGPSPosition lives in /dev/shm: it is cleared at boot and only set once GPS has a fix, so in a garage
+        # right after starting the car there is none. The car has not moved since the last fix, so fall back to the
+        # last known position (kept in the weather cache across restarts). EV6 HUD patch v19
         try:
             from openpilot.common.params import Params
             for params in (Params("/dev/shm/params"), Params()):
                 raw = params.get("LastGPSPosition")
                 if raw:
                     pos = json.loads(raw)
-                    return round(float(pos["latitude"]), 2), round(float(pos["longitude"]), 2)
+                    self._last_pos = (round(float(pos["latitude"]), 2), round(float(pos["longitude"]), 2))
+                    break
         except Exception:
             pass
-        return None
+        return getattr(self, "_last_pos", None)
 
     @staticmethod
     def _get_json(url: str) -> dict:
@@ -1156,7 +1162,10 @@ class Ev6Weather:
                 continue
             position = self._position()
             if position is None:
-                next_fetch = now + EV6_WEATHER_RETRY_S
+                if now >= getattr(self, "_no_pos_log_t", 0.0):
+                    self._no_pos_log_t = now + 600.0
+                    print("EV6 weather: no GPS position yet", flush=True)
+                next_fetch = now + 30.0
                 continue
             lat, lon = position
             try:
@@ -1174,7 +1183,7 @@ class Ev6Weather:
                 self.set(data)
                 try:
                     with open(EV6_WEATHER_CACHE, "w", encoding="utf-8") as f:
-                        json.dump({"time": time.time(), "data": data}, f)
+                        json.dump({"time": time.time(), "pos": [lat, lon], "data": data}, f)
                 except OSError:
                     pass
                 next_fetch = now + EV6_WEATHER_REFRESH_S
