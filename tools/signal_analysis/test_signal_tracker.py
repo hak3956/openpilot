@@ -1,7 +1,7 @@
 import unittest
 import cv2
 import numpy as np
-from signal_tracker import SignalTracker, night_proposals
+from signal_tracker import SignalTracker, night_proposals, day_proposals, small_percentile
 
 
 def detection(state, box=None):
@@ -77,6 +77,41 @@ class TestCausalState(unittest.TestCase):
     result = self.observer.update(1.65, [detection('red')])
     self.assertEqual(result['state'], 'unknown')
 
+  def test_recorded_internal_worker_cadence_confirms_each_color(self):
+    # The 150-200 ms measured duty-limited cadence used to reset every sample.
+    for t in [1., 1.2, 1.35]:
+      result = self.observer.update(t, [detection('red')])
+    self.assertEqual(result['state'], 'red')
+    for t in [1.55, 1.75]:
+      result = self.observer.update(t, [detection('green')])
+      self.assertEqual(result['state'], 'unknown')
+    result = self.observer.update(1.95, [detection('green')])
+    self.assertEqual(result['state'], 'green')
+    # Continuity tolerance does not extend output freshness.
+    self.assertEqual(self.observer.update(2.09, [])['state'], 'unknown')
+
+  def test_unknown_breaks_color_count_despite_long_track_history(self):
+    for t in [1., 1.2, 1.4, 1.6]:
+      self.observer.update(t, [detection('red')])
+    self.observer.update(1.8, [detection('green')])
+    self.observer.update(2., [detection('unknown')])
+    self.observer.update(2.2, [detection('green')])
+    self.assertEqual(self.observer.update(2.4, [detection('green')])['state'], 'unknown')
+    self.assertEqual(self.observer.update(2.6, [detection('green')])['state'], 'green')
+
+  def test_late_result_is_invalid_without_erasing_red_identity(self):
+    from openpilot.selfdrive.modeld.signal_tracking_shadow import result_fields
+    for t in [1., 1.2, 1.4]:
+      result = self.observer.update(t, [detection('red')])
+    fields = result_fields(result, 208.)
+    self.assertFalse(fields['fresh'])
+    self.assertEqual(fields['prediction'], 'unknown')
+    for t in [1.6, 1.8, 2.]:
+      result = self.observer.update(t, [detection('green')])
+    self.assertEqual(result['state'], 'green')
+    # A true camera gap still expires identity, even without a worker reset.
+    self.assertEqual(self.observer.update(2.3, [detection('green')])['state'], 'unknown')
+
 
 class TestNightProposals(unittest.TestCase):
   @staticmethod
@@ -109,6 +144,54 @@ class TestNightProposals(unittest.TestCase):
     for t in np.arange(1., 2., .05):
       result = tracker.update(float(t), proposals)
     self.assertEqual(result['state'], 'unknown')
+
+
+class TestDayProposals(unittest.TestCase):
+  @staticmethod
+  def frame(state='red', housing=True):
+    rgb = np.full((760, 1344, 3), 120, np.uint8)
+    if housing:
+      # The dark bar joins a large background, so its outer contour is unusable.
+      rgb[249:263, 620:672] = 20
+      rgb[249:420, 666:1000] = 20
+    center = (633, 256) if state == 'red' else (654, 256)
+    cv2.circle(rgb, center, 3, (255, 20, 20) if state == 'red' else (20, 210, 30), -1)
+    return rgb
+
+  def test_locally_supported_lamp_survives_merged_background(self):
+    self.assertTrue(any(d['raw'] == 'red' for d in day_proposals(self.frame())))
+
+  def test_colored_dot_without_dark_bar_is_not_enough(self):
+    self.assertEqual(day_proposals(self.frame(housing=False)), [])
+
+  def test_large_colored_patch_is_not_a_lamp(self):
+    rgb = np.full((760, 1344, 3), 120, np.uint8)
+    rgb[200:250, 600:680] = (20, 210, 30)
+    self.assertEqual(day_proposals(rgb), [])
+
+  def test_same_housing_day_red_then_green_and_startup_green(self):
+    tracker = SignalTracker(daytime_cores=True)
+    for t in [1., 1.2, 1.4]:
+      result = tracker.process(self.frame(), t)
+    self.assertEqual(result['state'], 'red')
+    for t in [1.6, 1.8, 2.]:
+      result = tracker.process(self.frame('green'), t)
+    self.assertEqual(result['state'], 'green')
+    unarmed = SignalTracker(daytime_cores=True)
+    for t in [1., 1.2, 1.4, 1.6]:
+      result = unarmed.process(self.frame('green'), t)
+    self.assertEqual(result['state'], 'unknown')
+
+  def test_daytime_experiment_is_not_selected_by_default_worker(self):
+    self.assertFalse(SignalTracker().daytime_cores)
+
+  def test_fast_percentile_matches_numpy_for_image_samples(self):
+    rng = np.random.default_rng(731)
+    for size in [1, 2, 3, 7, 16, 49, 128, 257]:
+      raw = rng.integers(0, 256, size, dtype=np.uint8)
+      for a in [raw, raw / 255.]:
+        for percentile in [0, 50, 70, 80, 85, 100]:
+          self.assertAlmostEqual(small_percentile(a, percentile), float(np.percentile(a, percentile)), places=12)
 
 
 if __name__=='__main__':unittest.main()
