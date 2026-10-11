@@ -26,9 +26,16 @@ def comparison_requested(directory=DIRECTORY):
     return False
 
 
-def new_trackers(factory, comparison):
-  legacy = factory()
-  daytime = factory(daytime_cores=True) if comparison else None
+def revalidated_requested(directory=DIRECTORY):
+  try:
+    return (Path(directory) / 'revalidated_enabled').read_text().strip() == '1'
+  except OSError:
+    return False
+
+
+def new_trackers(factory, comparison, revalidated=False):
+  legacy = factory(daytime_cores=True, robust_tracking=True) if revalidated and not comparison else factory()
+  daytime = (factory(daytime_cores=True, robust_tracking=True) if revalidated else factory(daytime_cores=True)) if comparison else None
   return legacy, daytime
 
 
@@ -88,19 +95,22 @@ def run(directory=DIRECTORY, duration=None):
     configure_worker_scheduling()
     source_sha = hashlib.sha256(Path(signal_tracker.__file__).read_bytes()).hexdigest()
     from openpilot.selfdrive.carrot.signal_assist_runtime import publish_observation
+    from openpilot.selfdrive.carrot.signal_display import display_requested, publish_display
     comparison = comparison_requested(directory)
+    revalidated = revalidated_requested(directory)
     def new_tracker():
-      return (*new_trackers(signal_tracker.SignalTracker, comparison), f'{os.getpid()}:{time.monotonic_ns()}')
+      return (*new_trackers(signal_tracker.SignalTracker, comparison, revalidated), f'{os.getpid()}:{time.monotonic_ns()}')
     tracker, daytime_tracker, session_id = new_tracker()
     client = VisionIpcClient('camerad', VisionStreamType.VISION_STREAM_ROAD, True)
     start = time.monotonic()
     cloudlog.event('signalTrackingShadowLoaded', mode='tracking_observation', algorithm_sha256=source_sha,
                    runtime=cv2.__version__, pid=os.getpid(), max_hz=20, target_cpu_duty=.5,
                    stream='road', reference_width=1344, reference_height=760, control_permission=False,
-                   assist_transport=not comparison, daytime_comparison=comparison)
+                   assist_transport=not comparison, daytime_comparison=comparison, revalidated=revalidated)
     previous_id = None
     last_file = 0.
     while (requested(directory) and tracking_requested(directory) and comparison_requested(directory) == comparison
+           and revalidated_requested(directory) == revalidated
            and (duration is None or time.monotonic() - start < duration)):
       if not client.is_connected() and not client.connect(False):
         tracker, daytime_tracker, session_id = new_tracker()
@@ -142,7 +152,8 @@ def run(directory=DIRECTORY, duration=None):
                 'work_ms': (time.monotonic() - work_start) * 1000,
                 'cpu_ms': (time.process_time() - cpu_start) * 1000,
                 'tracks': result['tracks'], 'daytime_comparison': comparison,
-                'assist_transport': not comparison, 'session': session_id, **result_fields(result, age)}
+                'assist_transport': not comparison, 'revalidated': revalidated,
+                'session': session_id, **result_fields(result, age)}
       try:
         publish_control_observation(result, frame_id, eof / 1e9, session_id,
                                     comparison=comparison, publisher=publish_observation)
@@ -162,6 +173,13 @@ def run(directory=DIRECTORY, duration=None):
                                  baseline_prediction=record['prediction'],
                                  **result_fields(candidate, candidate_age))
         cloudlog.event('signalTrackingDaytimeShadow', **comparison_record)
+      if display_requested(directory / 'display_enabled'):
+        try:
+          # Independent tmpfs endpoint remains available in comparison mode.
+          # It is never consumed as a control observation.
+          publish_display(comparison_record if comparison_record is not None else record)
+        except (OSError, ValueError, TypeError, KeyError):
+          cloudlog.exception('signalDisplayPublishFailed')
       if time.monotonic() - last_file >= 1:
         temp = directory / 'tracking_latest.tmp'
         temp.write_text(json.dumps(record))
