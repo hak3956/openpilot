@@ -459,6 +459,7 @@ CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v15: reverse screen, see ClusterUiRenderer._ev6_draw_reverse_screen
 # EV6 HUD patch v16: parked screen polish (dark shadow, top-view car for the tyre pressures)
 # EV6 HUD patch v17: parked-screen weather, see Ev6Weather
+# EV6 HUD patch v18: parked-screen battery %, see Ev6Battery
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
@@ -1183,6 +1184,83 @@ class Ev6Weather:
 
 
 EV6_WEATHER = Ev6Weather()
+
+# EV6 HUD patch v18: high-voltage battery state of charge. Not in opendbc's DBC; found in drive logs: CAN-FD message
+# 762 (0x2FA) on bus 0, byte 15 = SoC x 2 (0.5 % steps; 91 -> 37 over a drive from 46 % to 18 %, matching the car).
+# A daemon thread peeks at the 'can' stream (conflated, latest batch only) every 30 s while the parked screen is up.
+EV6_SOC_CAN_ADDR = 762
+EV6_SOC_CAN_BUS = 0
+EV6_SOC_BYTE = 15
+EV6_SOC_REFRESH_S = 30.0
+EV6_SOC_MAX_AGE_S = 600.0
+EV6_BATTERY_OFF_FLAG = "/data/ev6_battery_off"
+
+
+def ev6_soc_from_can(frames) -> float | None:
+    for frame in frames:
+        if frame.address == EV6_SOC_CAN_ADDR and frame.src == EV6_SOC_CAN_BUS and len(frame.dat) > EV6_SOC_BYTE:
+            soc = frame.dat[EV6_SOC_BYTE] * 0.5
+            if 0.0 <= soc <= 100.0:
+                return soc
+    return None
+
+
+class Ev6Battery:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._soc: float | None = None
+        self._soc_time = 0.0
+        self._wanted_until = 0.0
+        self._thread = None
+
+    def snapshot(self) -> float | None:
+        if os.path.exists(EV6_BATTERY_OFF_FLAG):
+            return None
+        self._wanted_until = time.monotonic() + EV6_WEATHER_IDLE_S
+        if self._thread is None and not os.environ.get("EV6_BATTERY_NO_READ"):
+            self._thread = threading.Thread(target=self._run, name="ev6-battery", daemon=True)
+            self._thread.start()
+        with self._lock:
+            if self._soc is None or time.monotonic() - self._soc_time > EV6_SOC_MAX_AGE_S:
+                return None
+            return self._soc
+
+    def set(self, soc: float) -> None:
+        with self._lock:
+            self._soc, self._soc_time = soc, time.monotonic()
+
+    def _run(self) -> None:
+        import openpilot.cereal.messaging as messaging
+
+        sock = None
+        next_read = 0.0
+        while True:
+            time.sleep(1.0)
+            now = time.monotonic()
+            if now > self._wanted_until:
+                sock = None  # stop listening while the parked screen is not in use
+                continue
+            if now < next_read:
+                continue
+            try:
+                if sock is None:
+                    sock = messaging.sub_sock("can", conflate=True, timeout=200)
+                soc = None
+                deadline = time.monotonic() + 3.0  # the message comes at 10 Hz, one in ~10 'can' batches
+                while soc is None and time.monotonic() < deadline:
+                    msg = messaging.recv_one(sock)
+                    if msg is not None:
+                        soc = ev6_soc_from_can(msg.can)
+                if soc is not None:
+                    self.set(soc)
+                next_read = now + (EV6_SOC_REFRESH_S if soc is not None else 5.0)
+            except Exception as exc:
+                print(f"EV6 battery: CAN read failed: {exc}", flush=True)
+                sock = None
+                next_read = now + EV6_SOC_REFRESH_S
+
+
+EV6_BATTERY = Ev6Battery()
 
 
 class ClusterUiRenderer:
@@ -1922,6 +2000,18 @@ class ClusterUiRenderer:
             for i in range(3):
                 rl.draw_circle(int(cx - 0.30 * s + i * 0.30 * s), int(cy + 0.48 * s), 0.07 * s, rl.Color(170, 205, 255, 255))
 
+    def _ev6_draw_battery(self, soc: float, x: float, cy: float, colors: dict, text) -> None:
+        # EV6 HUD patch v18: battery outline with a level fill and the percentage (floored, like the car's display)
+        level = max(0.0, min(100.0, soc))
+        color = (255, 59, 48) if level < 15 else (255, 159, 10) if level < 30 else (52, 199, 89)
+        w, h = 50.0, 24.0
+        self._rounded_rect(x, cy - h / 2, w, h, 6, colors["card"], colors["muted"], 2)
+        rl.draw_rectangle_rounded(rl.Rectangle(x + w + 1, cy - 5, 4, 10), 0.5, 4, rl_color(colors["muted"]))
+        if level > 0:
+            rl.draw_rectangle_rounded(rl.Rectangle(x + 4, cy - h / 2 + 4, max(3.0, (w - 8) * level / 100.0), h - 8), 0.3, 4,
+                                      rl_color(color))
+        text(f"{int(level)}%", x + w + 16, cy, 34, "text")
+
     @staticmethod
     def _ev6_park_duration_text(seconds: float) -> str:
         minutes = int(round(max(0.0, seconds) / 60.0))
@@ -1955,6 +2045,9 @@ class ClusterUiRenderer:
                 gear_y = 400
             text("P", 70, gear_y, 64, "accent")
             text("주차" if self.language == CLUSTER_LANGUAGE_KO else "Park", 130, gear_y + 4, 30, "muted")
+            soc = EV6_BATTERY.snapshot()  # EV6 HUD patch v18: high-voltage battery state of charge from CAN
+            if soc is not None:
+                self._ev6_draw_battery(soc, 236, gear_y + 2, colors, text)
 
             # centre: car photo on a soft floor shadow
             car_cx, car_bottom, car_h = 790.0, 412.0, 350.0
