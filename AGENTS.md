@@ -1,5 +1,27 @@
 # Repository memory
 
+- On 2026-10-15, deeper direct-eGPU analysis confirms all three fault snapshots
+  were USB4-1/5Gbps, active with autosuspend off. Outstanding output_read used
+  ~95–99% main-thread CPU; worker FIFO54 and DM FIFO5 share CPU7, with DM CPU
+  sharply reduced during stalls. Pinned90970e01 has no-op USB sleep and zero-time
+  libusb polling; older AMDSignal yield tests do not cover it. Polling/starvation
+  is a supported failure-path hypothesis, not the initial GPU/bridge root cause.
+  Parent close can add2s; no runtime/model change or eGPU restart performed.
+  Parked retry permission pending. S3-only TCP disconnect recovers in9.217s
+  without process restart, model/DM601/600 valid updates in30s. Offroad Wi-Fi
+  association differs from HUD output gating. See docs/s3_wifi_egpu_investigation_20261015.md.
+
+- On 2026-10-15, S3 home Wi-Fi delay improved after an approved single-AP
+  channel1->6/20MHz change: 35% loss/217ms mean to no loss/6.7ms after removing
+  the temporary AP lock. C4 had no pairing file; saved the existing key privately.
+  Defer S3 TCP open until renderer readiness to avoid its2s idle timeout; notice
+  new registration during USB wait.30 focused tests pass; native parked HUD runs
+  typically9-13Hz, model/DM600/601 valid updates in30s with original PIDs. Physical
+  panel/road validation is separate. Three new Oct14/15 NAV-RL eGPU output-read
+  timeouts cause~3s model gaps and~3s-old first fallback; underlying cause remains
+  unresolved. No eGPU/model/control change. Publish host fixes to both maintained
+  branches, single-parent. See docs/s3_wifi_egpu_investigation_20261015.md.
+
 - On 2026-10-14, the upper/lower signal-group trial fixes supplied qualified
   observations but not actual departure: 43,090 historical planner inputs at
   nominal/+20ms and 20 recent segments show no output changes; Santa Fe encoded
