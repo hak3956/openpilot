@@ -11,6 +11,7 @@ from openpilot.cereal.messaging import PubMaster, SubMaster
 from msgq.visionipc import VisionIpcClient, VisionStreamType, VisionBuf
 from opendbc.car.car_helpers import get_demo_car_params
 from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.modeld.egpu_events import log_event
 from openpilot.common.runtime_diagnostics import RuntimeDiagnostics
 from openpilot.common.params import Params
 from openpilot.common.stopping_params import get_stopping_speed
@@ -337,6 +338,9 @@ def main(demo=False):
   # not take modeld down while driving.
   phase_start = time.monotonic()
   small_model = ModelState(vipc_client_main.width, vipc_client_main.height, False) if model is None or USBGPU else None
+  if usbgpu_model_loaded:
+    from openpilot.selfdrive.modeld.internal_model_warmup import warm_internal_model_from_camera
+    warm_internal_model_from_camera(small_model, vipc_client_main)
   cloudlog.warning("model startup internal model: %.3fs, loaded=%s", time.monotonic() - phase_start, small_model is not None)
   if model is None:
     model = small_model
@@ -514,11 +518,15 @@ def main(demo=False):
         except Exception:
           cloudlog.exception('eGPU recovery could not be armed')
           egpu_recovery = None
+      else:
+        log_event('retry_stopped', reason='background recovery unavailable', retry=False, active_model='internal')
       run_count = 0
-      # Run the already-loaded internal model for this same camera frame. A
-      # missing modelV2 frame during fallback can otherwise cascade into a
-      # misleading communication/CAN error while selfdrived waits for modeld.
-      model_output = model.run(bufs, transforms, inputs, prepare_only)
+      # The failed USB wait can outlive this camera buffer by a second. Receive
+      # a fresh synchronized pair before running/publishing the internal model.
+      # Account for the consumed failed frame; the next frame still performs
+      # the ordinary dropped-frame catch-up when required.
+      last_vipc_frame_id = meta_main.frame_id
+      continue
     mt2 = time.perf_counter()
     inference_cpu_ms = (time.thread_time() - inference_cpu_start) * 1000
     model_execution_time = mt2 - mt1
@@ -588,6 +596,7 @@ def main(demo=False):
         params.put_bool("UsbGpuLoading", False)
         usbgpu_startup_pending = False
         cloudlog.warning("eGPU first model output published; startup complete")
+        log_event('live_output_resumed', frame_id=meta_main.frame_id, active_model='eGPU')
     last_vipc_frame_id = meta_main.frame_id
     if egpu_recovery is not None and model is small_model:
       try:

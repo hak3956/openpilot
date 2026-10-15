@@ -1,5 +1,73 @@
 # Repository memory
 
+- On 2026-10-15, user requested explicit tmux error/retry visibility after
+  repeated eGPU investigations. Add bounded stderr [eGPU] lifecycle events with
+  PID/monotonic time, saved failure cause/classification, attempt/limit/backoff,
+  waiting reason, probe-ready/handover, actual first live publication and stop
+  reason. Preserve all retry/validation/model policies; never write diagnostic
+  text to the worker stdout protocol.179 focused tests pass; no vehicle action.
+  See docs/egpu_persistent_rejection_20261015.md.
+
+- On 2026-10-15, identified the persistent Ioniq 5 PE block from actual NAS
+  diagnostics: pinned90970e01 reports AMD failed with +1 during input upload.
+  Its usb_reap latches LIBUSB_TRANSFER_ERROR=1; old classifier recognized only-1.
+  Both branches now classify exactly +/-1 only for that verified runtime, with
+  previous-boot/hash/artifact/smoke validation for old rejections.175 tests and
+  the exact recorded traceback probe pass. The failing734634 predates Oct15
+  timing changes. Device wall clock was stale; do not assert recorded21:05 as
+  incident time. Physical USB root cause remains unknown; no vehicle install.
+  This supersedes the earlier unknown reporter cause below; numerical migration
+  is a separate correction. See docs/egpu_persistent_rejection_20261015.md.
+
+- On 2026-10-15, a Mountain Dew report remained rejected after reboot. Current
+  wip lacked nav's previous-boot numerical-rejection migration; four positive
+  replay cases fail before the port and pass afterward. Port only that migration,
+  preserving branch model/runtime and per-frame policies. Keep identity, fresh
+  boot, artifact verification and new smoke checks; unknown/integrity failures
+  remain blocked. Both web branches deny ineffective compile-restart on rejection
+  and offer a bounded matching historical failure download. Original reporter
+  failure/commit is still unknown; no vehicle action or USB root-cause claim.
+  See docs/egpu_persistent_rejection_20261015.md.
+
+- On 2026-10-15, Carnival225-28 on0e647cd2 has a visible moving-to-stop corner
+  born in-lane, excluded from L1 and outside-history/45m CUT-IN L2. Prior Oct14
+  fallback is inactive, not a demonstrated regression. Add measured braking L2
+  only with current confident lanes/vision,350ms lane/braking/physical history,
+  actual speed decline and integrated range-rate agreement; preserve front/SCC
+  primary and ordinary CUT-IN. Broad cruising association was rejected. All
+  102 logs/502 labels: prior499 rows identical in modes1/2/3; failures11/10/13,
+  predecel0/0/1 and208 unverified remain. Three new cases pass. All122,090 mode1
+  frames have unchanged L1; only6 Carnival and7 reviewed Azera L2 samples differ.
+  Carnival first66.35m/video16.602s, only6 samples:1.45s before replay front or
+  about1.3s before recorded front. Tighter obstacle input is not MPC/closed-loop
+  braking validation; the later evidence gap remains.1230 Windows tests pass,
+  vault36 pass/4 skips. Publish both maintained branches, single-parent, verify
+  automatic NAS image/page/replay; no vehicle action. See
+  docs/carnival_in_lane_braking_20261015.md. Recordings remain private.
+
+- On 2026-10-15, the user requested allowing S3 Wi-Fi HUD up to10fps while eGPU
+  is active. Its live rate reader inherited the wired USB5fps cap. Give only the
+  Wi-Fi reader a10fps cap, preserve lower configured rates and direct USB policy.
+  Parked HUD-only restart reports9.8-10.0Hz; model/DM each1200 consecutive valid
+  frames in60s, no process restart or fallback.32 focused tests pass on both
+  branches. This is host refresh, not optical panel FPS. See
+  docs/s3_wifi_egpu_investigation_20261015.md.
+
+- On 2026-10-15, the user required normal model output at20Hz and requested
+  upstream NAV n16 afbf2e547e / AMD52205044 (checkpoint96244b1f/12800). It changes
+  only the PKL; runtime d3f09c9/90970e01 and old Jetson ONNX are unchanged. Pin
+  the separate NAS n16 package on carrot-nav; preserve wip's model selection.
+  Shared eGPU fixes yield200us after1ms in this exact runtime's previously no-op
+  USB sleep, retaining FIFO54/core7 after lower-priority/core trials failed20Hz.
+  Full-response deadline150ms, bounded failed-worker kill/reaping plus ownership
+  lock, fresh-frame fallback and startup-only internal inference warmup/reset
+  replace the ~3s stale fallback. Stopped-worker probe reaches internal output
+  in718ms with106ms capture age; this is not fault-time20Hz or root-cause proof.
+  Final native300s has6000/6000 consecutive valid model/DM frames at20.0002Hz;
+  no fallback, S3 connected. Later USB link counter remains1->1, not zero.
+  Nav298/wip257 focused tests pass. User authorized parked restarts/install. See
+  docs/egpu_n16_stability_20261015.md for final validation and remaining limits.
+
 - On 2026-10-15, deeper direct-eGPU analysis confirms all three fault snapshots
   were USB4-1/5Gbps, active with autosuspend off. Outstanding output_read used
   ~95–99% main-thread CPU; worker FIFO54 and DM FIFO5 share CPU7, with DM CPU
