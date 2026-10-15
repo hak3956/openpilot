@@ -1,5 +1,37 @@
 # Repository memory
 
+- On 2026-10-15, user's C4 Git Pull was blocked by two untracked manually
+  installed eGPU helpers identical to incoming blobs; back up only those files,
+  preserve unrelated build/model artifacts. Old93160a93 HUD repeatedly lost S3
+  before renderer ready. Prior qlogs reach99%; same HUD PID grows168.62->528.55
+  MiB RSS, +181.89MiB PSS across segments5->27. Actual failed JPEG pipelines
+  remain frozen after close/collect; unfreeze releases them. Pair HUD session
+  freeze with finally unfreeze/threshold restore, retaining active-frame policy.
+  27 focused tests and native isolated12-cycle reclamation pass. This fixes a
+  demonstrated retention path, not every system/native allocation or reboot
+  cause. User authorizes parked system stop/update; verify fresh P/zero/inactive.
+  Publish both maintained branches, single-parent. See docs/hud_retry_memory_20261015.md.
+
+- On 2026-10-15, user requested public S3 firmware/install guide after confirming
+  the panel wakes and turns off. S3 1.1.0 confirms sync/brightness-off, retries
+  failed shutdown and reasserts idle-off; C4 offroad dimming includes registered
+  S3. N16R8 / powered hub / TURZX 1cbe:0092 only. Browser installer and NAS ZIP
+  preserve NVS; never distribute device flash backups or pairing keys. UART
+  --auto requires a unique bridge and verifies identity. Native three-phase
+  150-frame final test passes with preserved pairing; browser-native flashing
+  is distinct from UART validation. Publish both maintained branches, single-parent.
+  See docs/s3_release_20261015.md and tools/esp32s3_display/INSTALL_KO.md.
+
+- On 2026-10-15, user requested MD v3 PR39087 on carrot-wip ONLY unless already
+  installed. Prior selection was8d736683; new checkpoint1365126a/12864, AMDd4c7a3fc,
+  pinned tinygrad02e69816/runtimec7c58622. PR changes only the big PKL; no matching
+  ONNX, internal/DM and Jetson remain unchanged. Preserve retry/fallback policies;
+  source-verified new runtime retains USB no-op sleep and +/-1 link-error meanings,
+  so extend only the exact hash allowlist.411 focused tests/13 Web tests pass,
+  8 Windows skips; Linux CI403 plus3 native-runtime tests and HTTPS empty-cache
+  install/offline reuse pass on8864280c9c.
+  No vehicle install or native20Hz/driving claim. See docs/md_v3_20261015.md.
+
 - On 2026-10-15, user requested explicit tmux error/retry visibility after
   repeated eGPU investigations. Add bounded stderr [eGPU] lifecycle events with
   PID/monotonic time, saved failure cause/classification, attempt/limit/backoff,
