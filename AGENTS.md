@@ -1,5 +1,58 @@
 # Repository memory
 
+- On 2026-10-16, stop Wi-Fi HUD under fresh Park/inactive guard for memory/link
+  diagnosis; ClusterHud stays0, networking stays on. Available memory recovers
+  to501MiB, but510 orphan HUD ION objects/141004800bytes persist; not fixed.
+  Isolated raylib headless init segfaults: never enable as workaround. Small USB
+  commands and PC auth fail without rendering; channel6 temporarily refuses S3,
+  channel1 attaches at-72dBm. After approved reset/app flash channel6 at-38dBm
+  passes24 commands and150 JPEG frames/three10fps phases; later1200 frames in
+  120.029s with0 disconnects and idle internal heap restored182104bytes. AP changed: no
+  root-cause or long-duration fix claim. S3 firmware1.1.1 adds dim GPIO48 RGB
+  states and secret-free S3STATUS UART diagnostics; GPIO38 revisions configurable.
+  Pairing preserved, C policy tests/build pass; actual LED visual check pending.
+  No C4 model/control install. See docs/s3_wifi_memory_20261016.md.
+
+- On 2026-10-16, user clarified mode2 is moving gentle deceleration with no/remote
+  lead; after stopping it uses mode1 exactly. Near means fixed distance, with50m
+  used provisionally. Check both leads at entry/final cap; retain MPC leads and
+  reject low speed/soft hold. User explicitly corrected display scope: mode0
+  does NO auxiliary recognition/display/control; modes1/2 show raw recognition
+  even with ACC inactive. Separate HUD ring from planner action, dim previous
+  result at most2s from capture, gray unknown; never feed display memory to
+  control. Do not restart the CPU tracker solely for1<->2. Collected144qlogs,
+  20full segments/10,020 observer records. Evening green/lead departure is still
+  held by existing guard; no blanket lead release or solved-recognition claim.
+  Publish both maintained branches single-parent; no vehicle deployment. See
+  docs/signal_modes_display_20261016.md for checks and limits.
+
+- On 2026-10-15, user requested review/integration of Tesla PR551 c61d998ff8.
+  Reproduced inactive phase-lead CAN/feedback and saturation defects; Tesla's
+  encoded zero375 also regranted controls through the shared accel helper.
+  Port the nine PR files unchanged: measured inactive angle, final feedback,
+  cooperative torque blending only above25km/h with normal low-speed steering,
+  output-limit-aware saturation and Tesla-specific longitudinal permission.
+  Both maintained branches:199 focused tests/128 subtests pass. Three inherited
+  generic disabled-angle safety cases still fail identically before/after;
+  do not claim full safety suite success. Native C uses a desktop packet/forward
+  ABI bridge, not MCU/vehicle validation. Publish single-parent on both branches;
+  no vehicle installation. See docs/tesla_pr551_review_20261015.md.
+
+- On 2026-10-15, user requested historical attribution of memory >80%. Read925
+  retained local logs (916 own-device with memory) plus on-device qlogs. Earliest
+  observed >80% is Oct10/108e, but Oct11/1095 stays73--77% with HUD+signals;
+  not one proven regression date. Current DM warmup/plateau and logger sawtooth
+  match earlier runs. GC retry fix reduces Python retention, but native HUD ION
+  buffers persist after process death (89.6MB), and new PID accumulates again.
+  Do not call memory normal/fixed or recommend process cycling as its fix.
+  Expected S3 transport log cleanup published both branches; fresh-manager
+  reboot verifies concise timeout lines (HUD-only restart kept cached code).
+  Reboot clears old native buffers but four retries retain6.6MB again; current
+  81%/685MiB available is not leak clearance. Preboot model/DM1200 frames/60s,
+  postboot1199 valid consecutive each at19.974Hz, no missing IDs/fallback;
+  do not claim a strict >=20Hz postboot pass. S3 still times out. See
+  docs/hud_retry_memory_20261015.md; raw evidence private.
+
 - On 2026-10-15, user's C4 Git Pull was blocked by two untracked manually
   installed eGPU helpers identical to incoming blobs; back up only those files,
   preserve unrelated build/model artifacts. Old93160a93 HUD repeatedly lost S3
