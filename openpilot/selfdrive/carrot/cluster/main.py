@@ -83,7 +83,7 @@ from cluster_system_monitor import ClusterProcessCoreUsageSampler, NetworkAddres
 from cluster_usb_display import TuringUsbDisplay, find_supported_usb_product, product_id_for_hud_mode, _set_cluster_hud_connected
 from cluster_usb_pipeline import AsyncJpegUsbPipeline
 from cluster_wifi_display import create_display
-from cluster_wifi_protocol import load_config as load_wifi_config
+from cluster_wifi_protocol import load_config as load_wifi_config, select_codec as select_wifi_codec
 from openpilot.common.display_scheduling import DisplayScheduler
 from openpilot.selfdrive.controls.lib.cutin_alert import CutinAlertCandidate, CutinAlertTracker
 
@@ -1934,40 +1934,45 @@ def run_demo(
                 report_frames = 0
                 last_report_time = now
     finally:
-        # Restore even if a later native-resource close raises an exception.
-        restore_gc_after_run(previous_gc_thresholds)
-        if usb_display is not None:
-            _set_cluster_hud_connected(False)
-        ev6_watchdog_kick(EV6_WATCHDOG_SHUTDOWN_S, force=True)  # EV6 HUD patch v12: closing must not hang either
-        scheduler.update(False, force=True, child_pid=h264_pipeline.encoder_pid if h264_pipeline is not None else None)
-        if signal_installed:
-            signal.signal(signal.SIGTERM, previous_sigterm_handler)
-        if gc_hook is not None:
+        try:
+            # Restore even if a later native-resource close raises an exception.
+            restore_gc_after_run(previous_gc_thresholds)
+            if usb_display is not None:
+                _set_cluster_hud_connected(False)
+            ev6_watchdog_kick(EV6_WATCHDOG_SHUTDOWN_S, force=True); scheduler.update(False, force=True, child_pid=h264_pipeline.encoder_pid if h264_pipeline is not None else None)  # EV6 HUD patch v12: closing must not hang either
+            if signal_installed:
+                signal.signal(signal.SIGTERM, previous_sigterm_handler)
+            if gc_hook is not None:
+                try:
+                    gc.callbacks.remove(gc_hook)
+                except ValueError:
+                    pass
+            network_address_provider.close()
+            if cluster_core_usage_sampler is not None:
+                cluster_core_usage_sampler.close()
+            renderer.release_nv12_dmabuf_output()
+            if h264_pipeline is not None:
+                h264_pipeline.close()
+            if usb_pipeline is not None:
+                usb_pipeline.close()
+            if controller is not None:
+                controller.close()
+            if route_tools_window is not None:
+                route_tools_window.close()
+            if route_source is not None:
+                route_source.close()
+            if live_source is not None:
+                live_source.close()
+            if navi_source is not None:
+                navi_source.close()
+        finally:
+            # A transport close may wait or receive the manager's SIGINT. Release
+            # graphics first, even if an earlier cleanup step was interrupted.
             try:
-                gc.callbacks.remove(gc_hook)
-            except ValueError:
-                pass
-        network_address_provider.close()
-        if cluster_core_usage_sampler is not None:
-            cluster_core_usage_sampler.close()
-        renderer.release_nv12_dmabuf_output()
-        if h264_pipeline is not None:
-            h264_pipeline.close()
-        if usb_pipeline is not None:
-            usb_pipeline.close()
-        if controller is not None:
-            controller.close()
-        if route_tools_window is not None:
-            route_tools_window.close()
-        if route_source is not None:
-            route_source.close()
-        if live_source is not None:
-            live_source.close()
-        if navi_source is not None:
-            navi_source.close()
-        if usb_display is not None:
-            usb_display.close()
-        renderer.close()
+                renderer.close()
+            finally:
+                if usb_display is not None:
+                    usb_display.close()
 
 
 def parse_args() -> argparse.Namespace:
@@ -2557,10 +2562,20 @@ def main(*, exit_on_error: bool = True) -> None:
             args.output = "window"
     encoder_source = apply_cluster_encoder_param(args)
     if wifi_config is not None:
-        args.usb_codec = "jpeg"
+        jpeg_fallback = (args.usb_codec_from_cli and args.usb_codec == "jpeg" and
+                         args.cluster_hud_encoder == CLUSTER_ENCODER_AUTO)
+        args.usb_codec = select_wifi_codec(wifi_config, jpeg_fallback=jpeg_fallback)
         args.usb_jpeg_quality = int(wifi_config.get("quality", 50))
-        args.usb_async = True
-        encoder_source = "S3 Wi-Fi JPEG"
+        args.usb_async = args.usb_codec == "jpeg"
+        encoder_source = f"S3 Wi-Fi {args.usb_codec.upper()}"
+        if args.usb_codec == "h264":
+            if args.usb_h264_bitrate == "auto":
+                args.usb_h264_bitrate = "1M"
+            args.usb_h264_gop = 10
+            args.usb_h264_wait_ack = False
+            args.usb_h264_soft_ack = False
+            if args.usb_h264_diagnose_interval == 0:
+                args.usb_h264_diagnose_interval = 10.0
     if args.usb_async and args.usb_codec != "jpeg":
         raise SystemExit("--usb-async only supports --usb-codec jpeg")
     target_fps, fps_source, usb_fps_reader, usb_display_fps, usb_display_fps_auto = resolve_usb_output_rate(args)
