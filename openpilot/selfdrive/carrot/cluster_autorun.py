@@ -557,7 +557,7 @@ def _usbgpu_startup_expected() -> bool:
         return False
 
 
-def _wait_for_usbgpu_startup(params: Params) -> None:
+def _wait_for_usbgpu_startup(params: Params, *, shared_usb: bool = True) -> None:
     """Keep the shared USB display idle until initial eGPU transfers finish."""
     remembered = params.get_bool(USBGPU_HARDWARE_SEEN_PARAM)
     expected = _usbgpu_startup_expected()
@@ -583,6 +583,11 @@ def _wait_for_usbgpu_startup(params: Params) -> None:
         active = params.get_bool(USBGPU_ACTIVE_PARAM)
         failed = params.get_bool(USBGPU_STARTUP_FAILED_PARAM)
         if not loading and active:
+            # Wi-Fi HUD packets go through S3's USB host, not C4's shared bus.
+            # Still wait for model startup above, but do not add the wired USB
+            # settling delay to every network reconnect.
+            if not shared_usb:
+                return
             print(
                 f"[cluster_autorun] eGPU startup complete; keeping USB display idle for "
                 f"{USBGPU_DISPLAY_STABILIZE_S:.0f}s",
@@ -624,8 +629,9 @@ def main() -> None:
     _ensure_cluster_paths()
     from cluster_graphics_cleanup import ensure_clean_autorun_process
     ensure_clean_autorun_process()
+    from cluster_profile import release_finished_session_memory
     from cluster_usb_display import find_supported_usb_product, product_id_for_hud_mode, product_label
-    from cluster_wifi_protocol import load_config as load_wifi_config
+    from cluster_wifi_protocol import discover as discover_wifi_display, load_config as load_wifi_config
 
     scheduler = DisplayScheduler(4, enabled=TICI)
     scheduler.update(False, force=True)
@@ -648,10 +654,28 @@ def main() -> None:
                 return
             continue
 
-        _wait_for_usbgpu_startup(params)
-
-        if load_wifi_config() is not None:
+        wifi_config = load_wifi_config()
+        if wifi_config is not None:
             print("[cluster_autorun] discovering registered S3 Wi-Fi HUD", flush=True)
+            try:
+                # Discovery has no persistent connection. Delay the expensive
+                # renderer/encoder until the paired display actually responds;
+                # its TCP session still opens after graphics initialization.
+                discover_wifi_display(wifi_config)
+            except OSError as exc:
+                detail = " ".join(str(exc).split())[:160]
+                print(
+                    f"[cluster_autorun] S3 Wi-Fi discovery unavailable "
+                    f"({type(exc).__name__}: {detail}); retrying in {RETRY_INTERVAL_S:.0f}s",
+                    flush=True,
+                )
+                time.sleep(RETRY_INTERVAL_S)
+                continue
+
+        _wait_for_usbgpu_startup(params, shared_usb=wifi_config is None)
+
+        if wifi_config is not None:
+            pass
         elif find_supported_usb_product(expected_product_id) is None:
             if not TICI:
                 print(
@@ -669,8 +693,10 @@ def main() -> None:
                         flush=True,
                     )
                     traceback.print_exc()
-                    time.sleep(RETRY_INTERVAL_S)
-                    continue
+                finally:
+                    release_finished_session_memory()
+                time.sleep(RETRY_INTERVAL_S)
+                continue
             found_product_id = _wait_for_supported_usb_device(
                 params,
                 expected_product_id,
@@ -717,6 +743,12 @@ def main() -> None:
             if _s3_transport_failure_reason(exc) is None and _is_usb_disconnect_error(exc):
                 retry_s = EV6_USB_RETRY_S  # EV6 HUD patch v12: the panel usually re-enumerates within a second
             _report_cluster_failure(exc)
+        finally:
+            # run_demo unfreezes on exit. Collect only after its stack and the
+            # handled exception are gone, before another renderer allocates.
+            # Otherwise failed pipeline traceback cycles survive the retry wait
+            # and overlap the next session until its late initialization GC.
+            release_finished_session_memory()
         time.sleep(retry_s)
 
 
