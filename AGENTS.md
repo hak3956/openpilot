@@ -1,5 +1,41 @@
 # Repository memory
 
+- On 2026-10-19, user requests HUD isolation and broad recent/native/signal
+  memory review. Same C4 boot/base2d71d318: normal HUD stop90.22->84.12%; stop
+  mode2 recognition and separate legacy policy observer reaches79.12%, without
+  model/DM/eGPU restart. Legacy observer consumes104MiB despite idle internal
+  standby, remains after SignalAssistMode0, original private flag1 backed up
+  then set0 and identity-checked worker terminated. Gate its creation only for
+  ready-eGPU standby; preserve warm fallback and active-internal opt-in behavior.
+  This is footprint correction, not proven creeping-leak/full-warning cure.
+  150 latest closed qlogs peak91%; user92% outside retained samples remains.
+  Full warmed windows lose200MiB; proclogd~12.4MiB, model/eGPU broadly stable,
+  Shmem+79.5MiB and smaller common-service growth, incomplete total attribution.
+  Oct11 pre-WiFi109c90-91% includes377MiB signalcolord child plus103MiB legacy
+  observer; current mode2 is~60MiB. Native CPU drawing60k iterations plateaus;
+  not GPU/road proof. RAM logs~81MiB; do not remove watchdog heartbeat or hide
+  growth by vacuuming. Observer adds bounded tmpfs/enable-state inventory.
+  20min HUD-off and10min all-off comparisons include marked diagnostic windows;
+  no long stability claim. Restore HUD1/mode2, retain legacy flag0:~87% snapshots,
+  then180s model/DM3600 valid consecutive each20.00088/20.00138Hz; S3 still retries
+  below90%. PC/C4 same H264 clips pass;8KiB chunks slower, no transport-policy fix.
+  NAV42/wip43 lifecycle tests and20proclog/2Linuxskips pass. Publish both branches
+  single-parent; model source not installed live. Restored-state low-priority
+  observer408329 capped2h/32MiB is pending, not a stability result. See
+  docs/memory_feature_isolation_20261019.md. Raw evidence private.
+
+- On 2026-10-19, user requested applying Jetlink491cf1e USB-current protection
+  after PV5 UVLO review. Port USB_ICL zero vote into Carrot's own daemon/helper,
+  all transport modes, only after1.5s observed empty port and helper rechecks.
+  Preserve across retries/exit; reboot clears. Omit upstream's attached-iOS
+  exception because transport selection is not proof of independent power.
+  Attached/unknown startup defers; missing/conflicting voter and failed helper
+  are bounded/reported. No VM/role/model/deadline changes or vehicle action.
+  Desktop fake-sysfs and daemon regression pass; Linux real-socket validation
+  remains CI-only. UVLO+Jetson is a plausible mechanism, not confirmed PV5 cure;
+  available900mA is not measured draw. Both maintained branches single-parent.
+  See docs/jetlink_usb_power_20261019.md for activation and validation limits.
+
 - On 2026-10-18, user again reports90% versus~80% after reboot. Completed2h
   capture has1412 samples/118 inventories: available421.45->375.51MiB,
   minimum326.65. Proclogd PSS14.64->52.81MiB; at10:21 private dirty rises38.62MiB
