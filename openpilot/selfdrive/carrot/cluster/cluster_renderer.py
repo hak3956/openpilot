@@ -454,7 +454,6 @@ CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v9: device display off with the HUD connected, see selfdrive/ui/ui_state.Device
 # EV6 HUD patch v10: upstream H.264 bitrate, no navigation turn card
 # EV6 HUD patch v11: soft stop, see selfdrive/controls/lib/longcontrol.py
-# EV6 HUD patch v12: freeze watchdog, see selfdrive/carrot/cluster_autorun.py
 # EV6 HUD patch v13: parked screen, see ClusterUiRenderer._ev6_draw_park_screen
 # EV6 HUD patch v14: ego EV6 at real size, see cluster_scene.EV6_EGO_LENGTH_M
 # EV6 HUD patch v15: reverse screen, see ClusterUiRenderer._ev6_draw_reverse_screen
@@ -463,6 +462,7 @@ CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v18: parked-screen battery %, see Ev6Battery
 # EV6 HUD patch v19: weather falls back to the last known position
 # EV6 HUD patch v20: Home Assistant bridge, see selfdrive/carrot/ev6_ha_bridge.py
+# EV6 HUD patch v21: v12 freeze watchdog removed
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
