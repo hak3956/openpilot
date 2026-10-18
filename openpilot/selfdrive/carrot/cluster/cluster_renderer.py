@@ -463,6 +463,7 @@ CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v19: weather falls back to the last known position
 # EV6 HUD patch v20: Home Assistant bridge, see selfdrive/carrot/ev6_ha_bridge.py
 # EV6 HUD patch v21: v12 freeze watchdog removed
+# EV6 HUD patch v22: signal assist chip, see ClusterUiRenderer._ev6_draw_signal_assist_chip
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
@@ -8255,11 +8256,39 @@ class ClusterUiRenderer:
                 source = rl.Rectangle(0.0, 0.0, float(texture.width), float(texture.height))
                 dest = rl.Rectangle(338.0 - size * 0.5, 128.0 - size * 0.5, size, size)
                 rl.draw_texture_pro(texture, source, dest, rl.Vector2(0.0, 0.0), 0.0, rl_color(WHITE))
+        self._ev6_draw_signal_assist_chip(theme)  # EV6 HUD patch v22
         speed_color = text_color
         if limit_value is not None and limit_value > 0 and speed_value > limit_value:
             speed_color = RED if speed_value >= limit_value + CLEAN_SPEED_OVER_RED_KPH else AMBER
         self._draw_text_with_stroke(str(speed_value), 175.0, 300.0, 160, speed_color, stroke, 3, anchor="center")
         self._draw_text("km/h" if self.is_metric else "mph", 175.0, 384.0, 24, muted, anchor="center")
+
+    def _ev6_draw_signal_assist_chip(self, theme) -> None:
+        # EV6 HUD patch v22: what the signal assist (SignalAssistMode 1/2) currently sees, as a two-lamp signal head:
+        # red lamp lit = red seen, green lamp lit = green seen, both = both; dimmed while it holds a previous reading.
+        # Nothing is drawn while the mode is 0 or nothing is recognised.
+        try:
+            from openpilot.selfdrive.carrot.signal_display import display_requested, signal_display_status
+
+            if not display_requested():
+                return
+            color, held, _ = signal_display_status()
+        except Exception:
+            return
+        if color not in (1, 2, 3):
+            return
+        x, y, w, h = 372.0, 106.0, 86.0, 44.0
+        fill = (0, 0, 0, 150) if theme.is_dark else (255, 255, 255, 215)
+        edge = (90, 98, 108, 200) if theme.is_dark else (170, 176, 184, 220)
+        self._rounded_rect(x, y, w, h, h * 0.5, fill, edge, 2.0)
+        lamp_off = (58, 62, 68) if theme.is_dark else (210, 213, 218)
+        for i, (bit, lit) in enumerate(((1, (255, 70, 70)), (2, (60, 230, 120)))):
+            cx, cy = x + 25.0 + i * 36.0, y + h * 0.5
+            on = bool(color & bit)
+            lamp = tuple(int(c * 0.45) for c in lit) if on and held else lit if on else lamp_off
+            rl.draw_circle_v(rl.Vector2(cx, cy), 13.0, rl_color(lamp))
+            if on and not held:
+                rl.draw_circle_lines(int(cx), int(cy), 16.0, rl_color((*lit, 120)))
 
     def _draw_clean_slowdown_badge(self, state: ClusterUiState, theme) -> None:
         # why openpilot is slowing down (carrotMan desiredSource) or a planned stop
