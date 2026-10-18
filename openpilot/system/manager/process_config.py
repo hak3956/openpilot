@@ -185,6 +185,8 @@ procs = [
   PythonProcess("carrot_server", "openpilot.selfdrive.carrot.carrot_server", always_run, enabled=not CARROT_WEB_EXTERNAL),
   PythonProcess("carrot_bluetooth", "openpilot.selfdrive.carrot.bluetooth.daemon", always_run, enabled=TICI, restart_if_crash=True),
   PythonProcess("cweb_push", "openpilot.selfdrive.carrot.cweb_push", always_run, enabled=not PC),
+  # EV6 HUD patch v20: car status and trips to Home Assistant; idle until /data/ev6_ha.json exists
+  PythonProcess("ev6_ha_bridge", "openpilot.selfdrive.carrot.ev6_ha_bridge", always_run, enabled=not PC, restart_if_crash=True),
   PythonProcess("carrot_cluster", "openpilot.selfdrive.carrot.cluster_autorun", enable_cluster_hud, restart_if_crash=True),
 
   #Xiaoge data broadcaster (conditional on ShareData param)

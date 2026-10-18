@@ -462,6 +462,7 @@ CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v17: parked-screen weather, see Ev6Weather
 # EV6 HUD patch v18: parked-screen battery %, see Ev6Battery
 # EV6 HUD patch v19: weather falls back to the last known position
+# EV6 HUD patch v20: Home Assistant bridge, see selfdrive/carrot/ev6_ha_bridge.py
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
