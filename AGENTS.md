@@ -1,5 +1,47 @@
 # Repository memory
 
+- On 2026-10-19, user confirms company/hotspot share SSID and explicitly requests
+  disconnect/reconnect testing without waiting for another hotspot. App-only S3
+  1.2.1 preserves pairing: separate association/IP states,30s/20s watchdogs,
+  max5s failed-attempt backoff; no repeated connect during active association.
+  Diagnostic suppressed-IP notification recovers in20s plus rejoin: the stack
+  still had IP, so this is a state-machine fault test, not DHCP/root-cause proof.
+  Sender sync protects setup from an observed local idle-off collision; local
+  decoder reset invalidates TCP/reference queue. Keep2s visual idle-off.
+  Production has UART S3RECONNECT, no private AP/fault hooks. Exact893088-byte app
+  67c8222e passes5 forced reconnects without MCU reboot/USB errors: IP3.88-3.94s,
+  authentication13.52-14.02s, forwarded stream verified17.34-20s. Host discovery
+  retries within same deadline; restore1Mbps/QP28..51 while retaining bounded
+  pacing/queues/CBR. Both branches60 tests+1skip; native C recovery policy and
+  installer5 tests pass; download test1pass/4Windows skips. Initial100s complex
+  test passes, worst full-colour~2fps then other phases~10: no universal10fps,
+  hotspot/road or overnight-memory clearance. Preserve C4 model/DM processes.
+  Exact final100s complex sequence passes too. Guarded C4 Git reconciliation
+  retains model163840/DM163845; mixed180s includes two observed DM gaps, then
+  untouched60s model1202/DM1201 consecutive valid at20.005802/20.000011Hz,
+  HUD12/12 connected. Final120s UART has no disconnect/close/USB error.
+  Both maintained branches single-parent; private backups/logs excluded.
+  See docs/s3_reconnect_20261019.md for final observation/release status.
+
+- On 2026-10-19, user rejects ending S3 work at parser-only correction. Native
+  driver QP S_CTRL succeeds without applying ranges; pre-stream S_EXT_CTRLS
+  with all-layer255/all six I/P/B limits works. S3 defaults500kbps CBR-CFR,
+  QP44..51 reduce luma bursts831472B to~28KB, but full-colour noise still177KB:
+  neither setting is a hard cap. Pace <=16KB chunks at125000B/s, keep three
+  ordered slots/backpressure; reset3s dead-sender timer only on completed chunk
+  progress. Fixed timer previously aborted active paced transmission. Retry
+  authenticated UDP capabilities within existing1s deadline; legacyJPEG remains.
+  Exact native/Python actual-S3 full100s sequence passes: colour noise90units/30s
+  (~3fps/~982kbps), later luma/blocks~10fps, no transport error; earlier same-
+  profile failures remain recorded. Guarded seven-source/native-library C4
+  install and HUD-only restart, model49147/DM49149 unchanged. Actual HUD~10fps/
+  280kbps/~8KB peaks, but180s observation has16/36 connected samples and ends
+  disconnected. Independent568-byte sync retransmissions and S3~2s FIN persist;
+  no universal radio/firmware/hotspot fix. Model/DM3601/3600 valid consecutive,
+  ~20Hz; mixed HUD-state available638->704MiB does not clear overnight creep.
+  Both branches59 tests/oneLinuxskip; no router/firmware change, raw private.
+  Publish single-parent. See docs/s3_complex_scene_20261019.md follow-up.
+
 - On 2026-10-19, user requests deliberately complex S3 traffic after motion-only
   dropouts on company Wi-Fi and hotspot. New boot/base68e7785c8b at~78% reproduces
   native1Mbps VBR-CFR silence:751 motion inputs/75s yield one residual unit,
