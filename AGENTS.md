@@ -1,5 +1,49 @@
 # Repository memory
 
+- On 2026-10-20, PR559 review accepts independent default-off OnnxBsdEnabled:
+  unload BSD network while lane recognition/snapshots continue; vehicle BSD stays.
+  Existing ShareData users must opt into camera BSD. General TCP7711 telemetry
+  removed, fresh Tesla DAS_road fields retained. Correct concurrent refresh order,
+  clear results on transitions and reject old-generation camera work/results;
+  Web lane-only readiness/OFF state and settings grouping fixed. Three new
+  regressions fail original PR/pass corrected; 142 desktop Python tests with
+  platform doubles, 261 web tests and25 Wiki tests pass. Both maintained branches,
+  single-parent; Git Pull/reboot delivery, no vehicle install or measured-RSS claim.
+  See docs/pr559_visual_bsd_20261020.md.
+
+- On 2026-10-20, owner clarifies initial red errors are comma upper-right
+  Jetson badge. Distinguish normal boot-runtime handoff; first-handshake
+  timeout/explicit no-reader wait stays connecting for<=120s before first ready.
+  Preserve model/protocol/signature/cleanup/runtime failures, deadlines,
+  transport retry and actual control alerts. Korean waiting/preparing badges.
+  Nav122/wip120 focused tests; actual C4 draw method desktop render checked.
+  Further drive review finds missing model frame18031 present in both cameras,
+  SOF skew11.302us; recorded metadata passes existing pairing. Exact reader
+  delay remains unknown. Add bounded previous/current-cycle camera gap trace,
+  <=1Hz on gaps only, no validity/model change. Native fake-input overhead
+  ~11us/pair; not real camera timing or a locationd fix. Comma Git Pull/reboot;
+  existing signed NAV host pin retained. No live install. Raw private.
+  Nav CI39389864670:94root/923broad(56skip)/119nav/11storage/11NAT pass;
+  wip CI39389916455:735broad(2skip)/119nav/11storage pass; both Windows pass.
+  See docs/jetson_startup_badge_20261020.md.
+
+- On 2026-10-20, owner clarifies missing map is Jetson USB screen mode7.
+  C4 NAV256 preview is fresh but absent from host snapshot/files; received
+  phone960x540 video is a different map. Forward bounded PNG only through
+  explicit Wi-Fi publisher opt-in; validate source/transport age, digest,
+  dimensions and decode in host HUD adapter. Preserve96KiB budget and hide
+  stale/missing images. Desktop55pass/2skip, actual draw method with graphics
+  double; physical activation pending Git Pull plus BOTH reboots. No live patch.
+  DATA live40% used/9.53GiB free, fixed16GiB inside40GiB image on119.375GiB card;
+  capacity adequate, no resize/cleanup. Three full drive segments show one
+  camera frame gap18030->18032, invalid odometry, pose inputs false57.7ms,
+  alert1.985s; sensors/posenet healthy, no locationd exit. Model loop max83.801ms
+  is window evidence, not a unique delay cause. No alert/validity/model changes.
+  CI39386479268 passes94root/868broad(56skip)/119nav/11storage/11NAT.
+  Signed hostc8a95308b0 published, full HTTPS size/hash verified; N16 unchanged.
+  Nav runtime only; wip record only. Raw private.
+  See docs/jetson_nav_preview_drive_20261020.md.
+
 - From 2026-10-20, user requires all normal delivery through comma Git Pull
   and restart/reboot. Design and package changes for that path; per-device
   SSH copies, Params edits, service manipulation and cache seeding are not
