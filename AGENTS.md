@@ -1,5 +1,79 @@
 # Repository memory
 
+- From 2026-10-20, user requires all normal delivery through comma Git Pull
+  and restart/reboot. Design and package changes for that path; per-device
+  SSH copies, Params edits, service manipulation and cache seeding are not
+  normal user installation steps. Use Jetson USB patch/install only when
+  the installed bootstrap cannot recover through the ordinary updater.
+  Current boot-gated runtime selection requires Jetson reboot too; keep
+  actual offroad and Internet throughout preparation. Do not claim a
+  comma-only restart activates a new already-running Jetson release.
+  See docs/jetson_update_policy_20261020.md for the delivery contract,
+  AP Internet-sharing correction and outstanding end-to-end validation.
+
+- On 2026-10-20, read-only owner checks reproduce Jetson NAS timeout while
+  comma HTTPS works: AP/DNS/forwarding active, no NAT, default nft backend
+  unsupported, legacy backend operational. Nav AP now owns one scoped
+  masquerade rule with backend probing, offroad-only setup/retry and exact
+  cleanup; Internet failure preserves local HUD Wi-Fi. No USB/OS/model change
+  or live installation. Desktop70pass/4skip; CI39369739310 passes94 root,
+  855 broad/56skip,119 nav,11 storage,11 NAT including real isolated packets.
+  Do not claim an uncached physical Git Pull/reboot update has been validated.
+  Wip receives delivery policy/docs only, preserving its runtime.
+
+
+- On 2026-10-20, user supersedes earlier model deferral and requests contributor
+  Jetson N16 port (reviewed cf036fa578/a1d723a6b4). Official ONNX01effc67,
+  814591107B, shares eGPU N16 checkpoint96244b1f/12800 export family; embedded
+  ONNX checkpoint omits step suffix. PKL/TRT equivalence is not established.
+  Port identity/label only to nav; keep existing recurrence, USB inference,
+  signed NAS trust and Wi-Fi/local-USB HUD. Wip model/runtime unchanged.
+  Independent full ONNX checks and148 CPU raw/patched frames exactly equal;
+  desktop91pass/1skip, Linux94root+845broad/55skip+119nav+11storage pass.
+  Signed runtime abac23f644 and comma5a0e8158 applied under fresh P/inactive
+  guards. NAS fetch timeout uses hash-verified WLAN cache transfer; normal
+  boot probe builds45.3s new TRT10.3 plan and passes actual finite inference.
+  Manager restart retains env/affinity; final offroad setup and daemon restart
+  recover an existing disappearing-DHCP-PID cleanup race (not fixed here).
+  Restore both temporary holds/onroad. Final300s model/DM each
+  6000/6000 valid consecutive at19.99947/19.99927Hz,
+  sender61/61 and receiver60/60 connected, USB renderer~10Hz.
+  Approx20Hz only; no actual-map, road, PKL/TRT or long-stability claim.
+  Raw private. See docs/jetson_n16_integration_20261020.md.
+
+
+- On 2026-10-20, owner reports default-only Jetson panel with ignition/P and
+  authorizes agent-controlled offroad. SD enrollment/cache succeeded, but prior
+  boot gate still approved989386eb; comma a4e57bad rejects legacy USB HUD and
+  dedicated AP waits for offroad. Fresh P/zero/standstill/inactive/panda guard,
+  existing snapshot startup hold plus onroad cycle and30min restoration watchdog
+  produce real offroad. AP starts; normal Jetson reboot/probe activates signed
+  b7b463a20b and autojoins WLAN. Restore original absent snapshot hold/onroad.
+  Physical USB H264 renderer reports10Hz/26 live services;12 receiver samples
+  and13 sender samples connected over60s, final HUD connected. Native model/DM
+  each1200 valid consecutive at19.99812/19.99857Hz (~20, not strict>=20).
+  Old80eedcdd model unchanged. No map bytes, independent visual confirmation,
+  road/RF recovery/long stability or new full-image claim. Nav hardware only;
+  wip runtime unchanged. Raw private. See docs/jetson_wifi_usb_panel_20261020.md.
+
+
+- On 2026-10-20, user requests comma-to-Jetson HUD/navigation over Wi-Fi,
+  no USB fallback, and complete ESP32-S3 display retirement. S3 code, firmware,
+  pairing tools and installer routes removed both branches; shared renderer
+  opens USB directly, preserving Jetson panel hotplug. Nav-only Wi-Fi integrates
+  tjdgus200 b09e20a1 with both-end USB display rejection and no Jetson display
+  pumps in inference. Dedicated AP starts offroad; model/provisioning USB stays.
+  Signed nav runtime b7b463a20b published and pinned, old80eedcdd ONNX unchanged;
+  latest n16 Jetson model remains deferred. Owner SD patched6144 APP bytes with
+  verbatim original setup retained; verified FAT payload/runtime pre-cache,
+  independent ext4/GPT readback; DATA journal/model/key not written. Next boot
+  performs one-time receiver enrollment/cache, then ordinary boot gate probes
+  and activates selected runtime. SD prepared, NOT boot/hardware tested.
+  Desktop52 integration and41 retirement tests/4Windows skips; Linux94 root,
+  845 broad/55skips,119 nav,11 real-storage pass; eGPU and installer CI pass.
+  No physical RF/display-rate/20Hz/road claim. Wip retains its separate runtime.
+  Private backups excluded; single-parent. See docs/jetson_wifi_usb_panel_20261020.md.
+
 - On 2026-10-19, offroad Mapbox review finds real navd allManeuvers failure:
   np.cumsum yields numpy.float64, rejected by device Capnp struct-list setter.
   Convert distance to Python float at serialization only. Six real-cereal cases
