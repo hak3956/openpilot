@@ -233,6 +233,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"AutoCurveSpeedFactor", {PERSISTENT, INT, "120"}},
 
     {"AutoTurnControl", {PERSISTENT, INT, "0"}},
+    {"AutoTurnControlRightLaneChange", {PERSISTENT, BOOL, "0"}},
     {"AutoTurnControlSpeedTurn", {PERSISTENT, INT, "20"}},
     {"AutoTurnControlTurnEnd", {PERSISTENT, INT, "6"}},
     {"AutoTurnMapChange", {PERSISTENT, INT, "0"}},
@@ -290,6 +291,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LeadBrakeLights", {PERSISTENT, BOOL, "0"}},
 
     {"SteerActuatorDelay", {PERSISTENT, INT, "0"}},
+    {"CenterToFrontRatioEnabled", {PERSISTENT, BOOL}},  // Retired: migration only
+    {"CenterToFrontRatio", {PERSISTENT, INT, "0"}},
     {"LatSmoothSec", {PERSISTENT, INT, "13"}},
     {"LatSuspendAngleDeg", {PERSISTENT, INT, "300"}},
     {"CruiseOnDist", {PERSISTENT, INT, "400"}},
