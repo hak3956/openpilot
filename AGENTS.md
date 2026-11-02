@@ -1,5 +1,40 @@
 # Repository memory
 
+- On 2026-11-03, owner requests comma0c40995 low-speed curvature review/adoption.
+  Port exact action-head denominator floor1.0->2.5m/s in modeld. Shared eGPU/Jetson
+  N16/Flip/Light action conversion is affected below9km/h above existing0.3m/s
+  hold; plan-only conversion, longitudinal outputs and smoothing remain intact.
+  Same-input attenuation can reduce low-speed overcorrection but also reduces
+  tight-turn curvature. No physical oscillation/road cure or timing claim.
+  Production-function regression76 checks (old24fail/52pass, new76pass), expanded
+  model/runtime/link suites140pass/5skip. Add regression to eGPU CI. Normal
+  carrot-wip GitPull/comma restart; no model download, Jetson bundle or live writes.
+
+- On 2026-11-03, owner requests morning TBT dropout/manual torque+approach review
+  and configurable right ATC distance. Ten full rlogs137168022B hash-matched,
+  11800frames/03a28b256c. Three pre-turn aborts are receiver driver_override with
+  no recorded completed-send ACK, not30deg completion. Receiver state conflates
+  payload change/stale400ms/expiry. Comma B1 neutral repeats200ms after tap-like
+  signals, receiver cause unresolved. Owner cannot power Jetson now, code first.
+  Normal turn return becomes15deg after30deg steer/20deg heading entry. Driver
+  cancellation after30deg steer requires pressed opposite torque and opposite
+  angle strictly past0 whilemoving. Preserve journey across receiver override.
+  Only previously exact-ACK+lamp-confirmed TBT holds continue through fresh
+  override/ready/waiting, never initial-unacked hold or override retry. Initial
+  three failures NOT cured. Source-loop8cases and local832/2skip,Wiki25 pass.
+  RightLaneChange parameter becomesINT metres0..500/step50/default0; legacy1
+  migrates250, runtime backup compatibility, oldmode4 remains retryable.
+  Prior12755frame replay20 requests, morning7/6lamp starts median0.284s. Strong
+  torque350+0.5s trial advances morningone0.204s, priornone; stronger confirmation
+  addsnothing. Unconditional0.5s adds roadside candidate. Manual timing unchanged.
+  No vehicle writes/CAN/reboot/bundle. GitPull/comma restart. See
+  docs/indicator_morning_review_20261103.md. Raw evidence private.
+  Source1196a59d34 published. Native41535582601 1285/40skip/362subtests;
+  Jetson41535583787 2329/56skip+232/62/94/119/11/11 andWindows pass. eGPU/docs
+  pass. Localweb52+30 pass after oldtoggle expectation update. Wiki c815bd5
+  twelve pages reviewed/hash-matched.
+
+
 - On 2026-11-02, owner separates prior manual-attempt replay from lunch long-turn
   review, then requests TBT wheel-return<=30deg completion.10hash-matched lunch
   rlogs127897928B on4a555c75b8: returnseg3 leftlamp22.512..37.002s/14.49s;
