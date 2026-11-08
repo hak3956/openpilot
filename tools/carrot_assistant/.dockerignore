@@ -1,0 +1,14 @@
+*
+!Dockerfile
+!package.json
+!package-lock.json
+!server.mjs
+!bridge.mjs
+!setting_bridge.mjs
+!drive_bridge.mjs
+!tools_bridge.mjs
+!VOICE_RULES.md
+!oauth.mjs
+!oauth_language.mjs
+!catalog.mjs
+!catalog.json
