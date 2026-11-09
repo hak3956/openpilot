@@ -104,6 +104,7 @@ from cluster_scene import (
     cluster_scene_state_key,
 )
 from cluster_system_monitor import SystemStats, SystemStatsSampler
+from cluster_vehicle_models import ego_model_name
 from cluster_utils import blink_visible, clamp
 
 
@@ -114,6 +115,7 @@ OPENPILOT_ADDON_FONT_DIR = SELFDRIVE_DIR / "assets" / "addon" / "font"
 KAIGEN_GOTHIC_KR_BOLD_FONT_PATH = OPENPILOT_FONT_DIR / "KaiGenGothicKR-Bold.ttf"
 JETBRAINS_MONO_FONT_PATH = OPENPILOT_FONT_DIR / "JetBrainsMono-Medium.ttf"
 VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "cybertruck" / "cybertruck_cluster.obj"
+PARK_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "ev6" / "ev6_cluster.obj"
 OTHER_VEHICLE_MODELS_DIR = CLUSTER_DIR / "assets" / "models" / "others"
 OTHER_VEHICLE_MODEL_PATH = CLUSTER_DIR / "assets" / "models" / "generic" / "generic_car_cluster.obj"
 TPMS_CAR_ICON_PATH = CLUSTER_DIR / "assets" / "images" / "tpms_toy_car.png"
@@ -428,7 +430,7 @@ WORLD_LABEL_TEXTURE_CACHE_LIMIT = 512
 WORLD_LABEL_TEXTURE_SIZE_GRID = 0.25
 WORLD_LABEL_TEXTURE_PADDING_PX = 4
 VEHICLE_MATERIAL_COLORS: dict[str, tuple[int, int, int, int]] = {
-    "body": (238, 239, 235, 255),  # EV6 HUD patch: Snow White Pearl
+    "body": (156, 166, 172, 255),
     "wheel": (18, 20, 22, 255),
     "besi_roda": (36, 38, 42, 255),
     "light": (184, 222, 255, 255),
@@ -452,19 +454,16 @@ CLEAN_CUTIN_MODEL_HOLD_S = 6.0  # ...and keep showing it with the same car model
 CLEAN_TTC_AMBER_S = 4.0  # EV6 HUD patch v6: lead label turns amber / red while closing in
 CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v8: clean planned path, see cluster_scene.clean_planned_path_strips
-# EV6 HUD patch v9: device display off with the HUD connected, see selfdrive/ui/ui_state.Device
+# The imported driving layout stays dormant; device-display sleep is not selected.
 # EV6 HUD patch v10: upstream H.264 bitrate, no navigation turn card
-# EV6 HUD patch v11: soft stop, see selfdrive/controls/lib/longcontrol.py
 # EV6 HUD patch v13: parked screen, see ClusterUiRenderer._ev6_draw_park_screen
 # EV6 HUD patch v14: ego EV6 at real size, see cluster_scene.EV6_EGO_LENGTH_M
-# EV6 HUD patch v15: reverse screen, see ClusterUiRenderer._ev6_draw_reverse_screen
 # EV6 HUD patch v16: parked screen polish (dark shadow, top-view car for the tyre pressures)
 # EV6 HUD patch v17: parked-screen weather, see Ev6Weather
-# EV6 HUD patch v18: parked-screen battery %, see Ev6Battery
 # EV6 HUD patch v19: weather falls back to the last known position
-# EV6 HUD patch v20: Home Assistant bridge, see selfdrive/carrot/ev6_ha_bridge.py
 # EV6 HUD patch v21: v12 freeze watchdog removed
 # EV6 HUD patch v22: signal assist chip, see ClusterUiRenderer._ev6_draw_signal_assist_chip
+# EV6 HUD sync v23: clean driving layout on (cluster_scene.clean_ui_enabled), CAN battery %, see Ev6Battery
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
     "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "cam": "카메라", "section": "구간단속",
@@ -485,6 +484,8 @@ SIDE_VEHICLE_MODEL_SCALE = 0.94
 
 
 def vehicle_material_color(name: str) -> tuple[int, int, int, int]:
+    if name == "body":
+        return (238, 239, 235, 255)  # P/R EV6: Snow White Pearl
     color = VEHICLE_MATERIAL_COLORS.get(name)
     if color is not None:
         return color
@@ -1022,10 +1023,10 @@ EV6_PARK_SCREEN_OFF_FLAG = "/data/ev6_park_screen_off"
 EV6_PARK_IMAGE_RETRY_S = 5.0
 EV6_PARK_DARK_SHADOW_FROM = 0.72  # dark theme: drop translucent pixels below this share of the photo height (ground shadow)
 EV6_PARK_WEEKDAYS_KO = ("월", "화", "수", "목", "금", "토", "일")
-EV6_PARK_COLORS_LIGHT = dict(bg_top=(246, 247, 249), bg_bot=(222, 225, 230), text=(28, 31, 36), muted=(118, 124, 133),
-                             card=(255, 255, 255), line=(214, 218, 224), accent=(0, 122, 255))
-EV6_PARK_COLORS_DARK = dict(bg_top=(30, 33, 38), bg_bot=(10, 11, 13), text=(236, 238, 241), muted=(140, 146, 155),
-                            card=(30, 33, 38), line=(54, 58, 65), accent=(80, 160, 255))
+EV6_PARK_COLORS_LIGHT = {"bg_top": (246, 247, 249), "bg_bot": (222, 225, 230), "text": (28, 31, 36), "muted": (118, 124, 133),
+                         "card": (255, 255, 255), "line": (214, 218, 224), "accent": (0, 122, 255)}
+EV6_PARK_COLORS_DARK = {"bg_top": (30, 33, 38), "bg_bot": (10, 11, 13), "text": (236, 238, 241), "muted": (140, 146, 155),
+                        "card": (30, 33, 38), "line": (54, 58, 65), "accent": (80, 160, 255)}
 
 # EV6 HUD patch v15: reverse screen (gear R). Kia EV6: wheelbase 2.90 m, steer ratio 16 (opendbc CarSpecs),
 # rear axle 1.44 m and rear bumper 2.34 m behind the body centre.
@@ -1093,8 +1094,8 @@ def ev6_weather_from_response(forecast: dict, air: dict | None) -> dict:
     elif day_kind in ("rain", "snow") and chance is not None and chance >= 30:
         label = f"오늘 {day_label} {chance:.0f}%"  # the icon still shows the current sky
     air_now = (air or {}).get("current", {})
-    return dict(kind=kind, label=label, temp=float(current.get("temperature_2m", 0.0)), max=first("temperature_2m_max"),
-                min=first("temperature_2m_min"), dust=ev6_dust_grade(air_now.get("pm10"), air_now.get("pm2_5")))
+    return {"kind": kind, "label": label, "temp": float(current.get("temperature_2m", 0.0)), "max": first("temperature_2m_max"),
+            "min": first("temperature_2m_min"), "dust": ev6_dust_grade(air_now.get("pm10"), air_now.get("pm2_5"))}
 
 
 class Ev6Weather:
@@ -1117,13 +1118,13 @@ class Ev6Weather:
             self._thread = threading.Thread(target=self._run, name="ev6-weather", daemon=True)
             self._thread.start()
         with self._lock:
-            if self._data is None or time.time() - self._data_time > EV6_WEATHER_MAX_AGE_S:
+            if self._data is None or time.time() - self._data_time > EV6_WEATHER_MAX_AGE_S:  # noqa: TID251 - persisted cache spans reboots
                 return None
             return self._data
 
     def set(self, data: dict, data_time: float | None = None) -> None:
         with self._lock:
-            self._data, self._data_time = data, time.time() if data_time is None else data_time
+            self._data, self._data_time = data, time.time() if data_time is None else data_time  # noqa: TID251 - persisted UTC time
 
     def _load_cache(self) -> None:
         try:
@@ -1174,12 +1175,12 @@ class Ev6Weather:
             lat, lon = position
             try:
                 forecast = self._get_json(
-                    "https://api.open-meteo.com/v1/forecast"
-                    f"?latitude={lat}&longitude={lon}&timezone=auto&forecast_days=1"
-                    "&current=temperature_2m,weather_code"
+                    "https://api.open-meteo.com/v1/forecast" +
+                    f"?latitude={lat}&longitude={lon}&timezone=auto&forecast_days=1" +
+                    "&current=temperature_2m,weather_code" +
                     "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max")
                 try:
-                    air = self._get_json("https://air-quality-api.open-meteo.com/v1/air-quality"
+                    air = self._get_json("https://air-quality-api.open-meteo.com/v1/air-quality" +
                                          f"?latitude={lat}&longitude={lon}&current=pm10,pm2_5")
                 except Exception:
                     air = None
@@ -1187,7 +1188,7 @@ class Ev6Weather:
                 self.set(data)
                 try:
                     with open(EV6_WEATHER_CACHE, "w", encoding="utf-8") as f:
-                        json.dump({"time": time.time(), "pos": [lat, lon], "data": data}, f)
+                        json.dump({"time": time.time(), "pos": [lat, lon], "data": data}, f)  # noqa: TID251 - persisted UTC time
                 except OSError:
                     pass
                 next_fetch = now + EV6_WEATHER_REFRESH_S
@@ -1275,12 +1276,16 @@ class Ev6Battery:
 
 EV6_BATTERY = Ev6Battery()
 
-
 class ClusterUiRenderer:
     # Class defaults also keep lightweight object.__new__ render probes on the
     # original Korean/metric presentation without running the GPU-heavy init.
     language = CLUSTER_LANGUAGE_KO
     is_metric = True
+    _other_vehicle_models = ()
+    _other_vehicle_names = ()
+    _other_vehicle_paint = ()
+    _vehicle_shaders = ()
+    _cutin_hold = None
     panel_layout = CLUSTER_PANEL_LAYOUT_DRIVING_LEFT
 
     def __init__(
@@ -1339,7 +1344,16 @@ class ClusterUiRenderer:
         self._nv12_dmabuf_pool_disabled = False
         self._vehicle_model = None
         self._vehicle_model_load_attempted = False
+        self._park_vehicle_model = None
+        self._park_vehicle_models_loaded = False
         self._other_vehicle_models: list[object] = []
+        self._other_vehicle_names: list[str] = []
+        self._park_model_texture = None
+        self._park_model_key = None
+        self._ev6_reverse_sprite = None
+        self._ev6_reverse_sprite_key = None
+        self._ev6_park_textures = None
+        self._ev6_park_retry_t = 0.0
         self._cutin_hold: list[float] | None = None  # EV6 HUD patch v6: [colour until, x, long_m, model idx, model until]
         self._other_vehicle_paint: list[tuple[object, int] | None] = []
         self._vehicle_shaders: list[tuple[object, int]] = []
@@ -1638,6 +1652,7 @@ class ClusterUiRenderer:
         self._system_stats.close()
         if not self._window_open:
             return
+        self._close_park_textures()
         if self._direct_nv12_readback is not None:
             self._direct_nv12_readback.close()
             self._direct_nv12_readback = None
@@ -1743,11 +1758,17 @@ class ClusterUiRenderer:
         if self._vehicle_model is not None:
             rl.unload_model(self._vehicle_model)
             self._vehicle_model = None
+        if self._park_vehicle_model is not None:
+            rl.unload_model(self._park_vehicle_model)
+            self._park_vehicle_model = None
+        self._park_vehicle_models_loaded = False
         for other_model in self._other_vehicle_models:
             rl.unload_model(other_model)
         self._other_vehicle_models = []
+        self._other_vehicle_names = []
         self._other_vehicle_paint = []
         self._vehicle_shaders = []
+        self._cutin_hold = None
         self._vehicle_model_load_attempted = False
         self._scene_cache_key = None
         self._scene_cache = None
@@ -1900,23 +1921,20 @@ class ClusterUiRenderer:
         """Draw one frame into the currently active raylib render target."""
         if self._ev6_park_screen_active(state):  # EV6 HUD patch v13: parked screen replaces the road view in P
             self._ev6_draw_park_screen(state)
-            self._draw_alert_overlay(getattr(state, "alert", None))
-            return
-        if self._ev6_reverse_screen_active(state):  # EV6 HUD patch v15: reversing guide in R
+        elif self._ev6_reverse_screen_active(state):
             self._ev6_draw_reverse_screen(state)
-            self._draw_alert_overlay(getattr(state, "alert", None))
-            return
-        if signal_lights is None:
-            signal_lights = self._turn_signal_lights(state)
-        profile_stage = self._profile_start()
-        if self.screen_mode in (CLUSTER_SCREEN_MODE_DEBUG_GRAPH, CLUSTER_SCREEN_MODE_NAVI):
-            self._clear_world()
         else:
-            self._render_world(state, signal_lights)
-        self._profile_add("render.world", profile_stage)
-        profile_stage = self._profile_start()
-        self._draw_hud(state, signal_lights)
-        self._profile_add("render.hud", profile_stage)
+            if signal_lights is None:
+                signal_lights = self._turn_signal_lights(state)
+            profile_stage = self._profile_start()
+            if self.screen_mode in (CLUSTER_SCREEN_MODE_DEBUG_GRAPH, CLUSTER_SCREEN_MODE_NAVI):
+                self._clear_world()
+            else:
+                self._render_world(state, signal_lights)
+            self._profile_add("render.world", profile_stage)
+            profile_stage = self._profile_start()
+            self._draw_hud(state, signal_lights)
+            self._profile_add("render.hud", profile_stage)
         profile_stage = self._profile_start()
         from openpilot.common.indicator_display import draw as draw_indicator
         draw_indicator(530, 78, 460, self._korean_font or self._font, 24)
@@ -1958,9 +1976,113 @@ class ClusterUiRenderer:
             self._draw_text("NAV MAP: waiting for route / GPS / tiles", center_x,
                             DESIGN_HEIGHT / 2, 24, (255, 255, 255), "center")
 
+    def _ego_model(self, name: str):
+        names = getattr(self, "_other_vehicle_names", ())
+        if name in names:
+            index = names.index(name)
+            self._set_other_paint(index, None)
+            return self._other_vehicle_models[index], name
+        return self._park_vehicle_model, "ev6"
+
+    def _close_park_textures(self) -> None:
+        textures = list(self._ev6_park_textures or ())
+        if self._park_model_texture is not None:
+            textures.append(self._park_model_texture)
+        if self._ev6_reverse_sprite:
+            textures.append(self._ev6_reverse_sprite[0])
+        self._ev6_reverse_sprite = None
+        self._ev6_reverse_sprite_key = None
+        # Detach handles first: close is idempotent, including after an interrupted unload.
+        self._ev6_park_textures = None
+        self._ev6_park_retry_t = 0.0
+        self._park_model_texture = None
+        self._park_model_key = None
+        self._park_model_retry_t = 0.0
+        failure = None
+        for texture in textures:
+            try:
+                rl.unload_texture(texture)
+            except BaseException as exc:
+                failure = failure or exc
+        if failure is not None:
+            raise failure
+
+    def _prepare_park_model_texture(self, state: ClusterUiState) -> None:
+        """Cache the selected car before binding the main frame's render target."""
+        if not self._ev6_park_screen_active(state):
+            return
+        model, key = self._ego_model(ego_model_name(state.car_fingerprint))
+        if model is None or key == self._park_model_key:
+            return
+        now = time.monotonic()
+        if now < getattr(self, "_park_model_retry_t", 0.0):
+            return
+        self._park_model_retry_t = now + EV6_PARK_IMAGE_RETRY_S
+        if self._park_model_texture is not None:
+            rl.unload_texture(self._park_model_texture)
+            self._park_model_texture = None
+        self._park_model_key = None
+        target = image = texture = None
+        try:
+            from cluster_scene import EV6_EGO_HEIGHT_M, EV6_EGO_LENGTH_M, EV6_EGO_WIDTH_M
+
+            camera = rl.Camera3D(rl.Vector3(-6.5, 7.5, 4.0), rl.Vector3(0.0, 0.0, 0.75),
+                                 rl.Vector3(0.0, 0.0, 1.0), 32.0, rl.CameraProjection.CAMERA_PERSPECTIVE)
+            view = rl.ffi.new("float[]", [camera.position.x, camera.position.y, camera.position.z])
+            for shader, loc in self._vehicle_shaders:
+                if loc >= 0:
+                    rl.set_shader_value(shader, loc, view, rl.ShaderUniformDataType.SHADER_UNIFORM_VEC3)
+            scale = ((EV6_EGO_WIDTH_M, EV6_EGO_LENGTH_M, EV6_EGO_HEIGHT_M) if key == "ev6"
+                     else (1.82, 4.35, 1.35))
+            target = rl.load_render_texture(800, 480)
+            rl.begin_texture_mode(target)
+            try:
+                rl.clear_background(rl.BLANK)
+                rl.begin_mode_3d(camera)
+                try:
+                    rl.rl_disable_backface_culling()
+                    rl.draw_model_ex(model, rl.Vector3(0.0, 0.0, 0.0), rl.Vector3(0.0, 0.0, 1.0),
+                                     0.0, rl.Vector3(*scale), rl.WHITE)
+                finally:
+                    rl.rl_enable_backface_culling()
+                    rl.end_mode_3d()
+            finally:
+                rl.end_texture_mode()
+            image = rl.load_image_from_texture(target.texture)
+            rl.image_flip_vertical(image)
+            if not self._crop_car_image(image):
+                return
+            texture = rl.load_texture_from_image(image)
+            rl.gen_texture_mipmaps(texture)
+            rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
+            self._park_model_texture, texture = texture, None
+            self._park_model_key = key
+            self._park_model_retry_t = 0.0
+        except Exception as exc:
+            print(f"Parked car preview unavailable: {exc}", flush=True)
+        finally:
+            if texture is not None:
+                rl.unload_texture(texture)
+            if image is not None:
+                rl.unload_image(image)
+            if target is not None:
+                rl.unload_render_texture(target)
+
+    @staticmethod
+    def _crop_car_image(image) -> bool:
+        rl.image_format(image, rl.PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)
+        alpha = np.frombuffer(rl.ffi.buffer(image.data, image.width * image.height * 4),
+                              dtype=np.uint8).reshape(image.height, image.width, 4)[..., 3]
+        rows, cols = np.nonzero(alpha.max(axis=1))[0], np.nonzero(alpha.max(axis=0))[0]
+        if not len(rows):
+            return False
+        rl.image_crop(image, rl.Rectangle(int(cols[0]), int(rows[0]),
+                                         int(cols[-1] - cols[0] + 1), int(rows[-1] - rows[0] + 1)))
+        return True
+
     # ---- EV6 HUD patch v13: parked screen ----
     def _ev6_park_screen_active(self, state: ClusterUiState) -> bool:
-        if not clean_ui_enabled() or not getattr(state, "onroad", False):
+        if not getattr(state, "onroad", False):
             return False
         if str(getattr(state, "gear_text", "") or "").strip().upper() != "P":
             return False
@@ -1982,6 +2104,8 @@ class ClusterUiRenderer:
             path = os.environ.get("EV6_PARK_CAR_IMAGE", EV6_PARK_CAR_IMAGE)
             if not os.path.isfile(path):
                 return None
+            image = dark_image = None
+            textures = []
             try:
                 image = rl.load_image(path)
                 if image.width <= 0 or image.height <= 0:
@@ -1995,18 +2119,23 @@ class ClusterUiRenderer:
                 shadow = floor[..., 3] < 250
                 floor[shadow, :3] = 0
                 floor[shadow, 3] = (floor[shadow, 3] * 0.85).astype(np.uint8)
-                textures = []
                 for img in (image, dark_image):
                     texture = rl.load_texture_from_image(img)
+                    textures.append(texture)
                     rl.gen_texture_mipmaps(texture)
                     rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
-                    textures.append(texture)
-                rl.unload_image(image)
-                rl.unload_image(dark_image)
+                self._ev6_park_textures = textures
             except Exception as exc:
                 print(f"EV6 parked screen: could not load {path}: {exc}", flush=True)
                 return None
-            self._ev6_park_textures = textures
+            finally:
+                if image is not None:
+                    rl.unload_image(image)
+                if dark_image is not None:
+                    rl.unload_image(dark_image)
+                if self._ev6_park_textures is None:
+                    for texture in textures:
+                        rl.unload_texture(texture)
         return textures[1 if dark else 0]
 
     def _ev6_draw_top_view_car(self, cx: float, cy: float, dark: bool, colors: dict) -> None:
@@ -2073,8 +2202,8 @@ class ClusterUiRenderer:
                 rl.draw_circle(int(cx - 0.30 * s + i * 0.30 * s), int(cy + 0.48 * s), 0.07 * s, rl.Color(170, 205, 255, 255))
 
     def _ev6_draw_battery(self, soc: float, x: float, cy: float, colors: dict, text) -> None:
-        # EV6 HUD patch v18: battery outline with a level fill and the percentage (floored, like the car's display)
-        level = max(0.0, min(100.0, soc))
+        # ClusterUiState uses the existing carState.fuelGauge fraction (0..1).
+        level = clamp(soc, 0.0, 1.0) * 100.0
         color = (255, 59, 48) if level < 15 else (255, 159, 10) if level < 30 else (52, 199, 89)
         w, h = 50.0, 24.0
         self._rounded_rect(x, cy - h / 2, w, h, 6, colors["card"], colors["muted"], 2)
@@ -2085,12 +2214,15 @@ class ClusterUiRenderer:
         text(f"{int(level)}%", x + w + 16, cy, 34, "text")
 
     @staticmethod
-    def _ev6_park_duration_text(seconds: float) -> str:
+    def _ev6_park_duration_text(seconds: float, korean: bool = True) -> str:
         minutes = int(round(max(0.0, seconds) / 60.0))
-        return f"{minutes // 60}시간 {minutes % 60:02d}분" if minutes >= 60 else f"{minutes}분"
+        if korean:
+            return f"{minutes // 60}시간 {minutes % 60:02d}분" if minutes >= 60 else f"{minutes}분"
+        return f"{minutes // 60}h {minutes % 60:02d}m" if minutes >= 60 else f"{minutes}m"
 
     def _ev6_draw_park_screen(self, state: ClusterUiState) -> None:
         theme = self._current_theme()
+        korean = self.language == CLUSTER_LANGUAGE_KO
         colors = EV6_PARK_COLORS_DARK if theme.is_dark else EV6_PARK_COLORS_LIGHT
         rl.clear_background(rl_color(colors["bg_bot"]))
         rl.rl_push_matrix()
@@ -2117,7 +2249,11 @@ class ClusterUiRenderer:
                 gear_y = 400
             text("P", 70, gear_y, 64, "accent")
             text("주차" if self.language == CLUSTER_LANGUAGE_KO else "Park", 130, gear_y + 4, 30, "muted")
-            soc = EV6_BATTERY.snapshot()  # EV6 HUD patch v18: high-voltage battery state of charge from CAN
+            # Use the existing vehicle decoder, never infer EV6 CAN layout from the fallback picture.
+            soc = state.fuel_gauge if state.energy_gauge_label == "battery" else None
+            if soc is None and ego_model_name(state.car_fingerprint) == "ev6":  # EV6 HUD sync v23: CAN (v18)
+                percent = EV6_BATTERY.snapshot()
+                soc = None if percent is None else percent / 100.0
             if soc is not None:
                 self._ev6_draw_battery(soc, 236, gear_y + 2, colors, text)
 
@@ -2127,7 +2263,9 @@ class ClusterUiRenderer:
                 k = 1.0 - i * 0.045
                 rl.draw_ellipse(int(car_cx), int(car_bottom - 10), int(330 * k), int(30 * k),
                                 rl.Color(0, 0, 0, 8 if theme.is_dark else 7))
-            texture = self._ev6_park_car_texture(theme.is_dark)
+            texture = self._park_model_texture
+            if ego_model_name(state.car_fingerprint) == "ev6":
+                texture = self._ev6_park_car_texture(theme.is_dark) or texture
             if texture is not None:
                 car_w = car_h * texture.width / max(1, texture.height)
                 rl.draw_texture_pro(texture, rl.Rectangle(0, 0, texture.width, texture.height),
@@ -2141,17 +2279,18 @@ class ClusterUiRenderer:
             for key, dx, dy in (("fl", -70, -34), ("fr", 70, -34), ("rl", -70, 34), ("rr", 70, 34)):
                 value = getattr(tpms, key, None) if tpms is not None else None
                 text("--" if value is None or value <= 0 else f"{value:.0f}", cx + dx, cy + dy, 30, "text", "center")
-            text("공기압 (psi)", cx, cy + 86, 22, "muted", "center")
+            text("공기압 (psi)" if korean else "Tyres (psi)", cx, cy + 86, 22, "muted", "center")
 
             # right: this trip
             trip = getattr(state, "trip_report", None)
             x0, x1 = 1420, 1860
-            text("이번 주행", x0, 70, 30, "muted")
+            text("이번 주행" if korean else "This trip", x0, 70, 30, "muted")
             rows = (
-                ("거리", f"{trip.distance_m / 1000.0:.1f} km" if trip else "--"),
-                ("시간", self._ev6_park_duration_text(trip.duration_s) if trip else "--"),
-                ("평균", f"{trip.average_speed_kph:.1f} km/h" if trip else "--"),
-                ("자동주행", f"{trip.auto_ratio_percent:.0f} %" if trip else "--"),
+                ("거리" if korean else "Distance", format_trip_distance(trip.distance_m, self.is_metric) if trip else "--"),
+                ("시간" if korean else "Time", self._ev6_park_duration_text(trip.duration_s, korean) if trip else "--"),
+                ("평균" if korean else "Average",
+                 f"{display_speed(trip.average_speed_kph, self.is_metric):.1f} {speed_unit(self.is_metric)}" if trip else "--"),
+                ("자동주행" if korean else "Automatic", f"{trip.auto_ratio_percent:.0f} %" if trip else "--"),
             )
             for i, (label, value) in enumerate(rows):
                 y = 135 + i * 78
@@ -2160,14 +2299,15 @@ class ClusterUiRenderer:
                 if i < len(rows) - 1:
                     rl.draw_line_ex(rl.Vector2(x0, y + 39), rl.Vector2(x1, y + 39), 2, rl_color(colors["line"]))
             if trip:
-                text(f"급가속 {trip.hard_accel_count} · 급감속 {trip.hard_brake_count} · 급코너 {trip.hard_corner_count}",
-                     x0, 445, 24, "muted")
+                summary = (f"급가속 {trip.hard_accel_count} · 급감속 {trip.hard_brake_count} · 급코너 {trip.hard_corner_count}" if korean
+                           else f"Hard accel {trip.hard_accel_count} · brake {trip.hard_brake_count} · corner {trip.hard_corner_count}")
+                text(summary, x0, 445, 24, "muted")
         finally:
             rl.rl_pop_matrix()
 
     # ---- EV6 HUD patch v15: reverse screen ----
     def _ev6_reverse_screen_active(self, state: ClusterUiState) -> bool:
-        if not clean_ui_enabled() or not getattr(state, "onroad", False):
+        if not getattr(state, "onroad", False):
             return False
         if str(getattr(state, "gear_text", "") or "").strip().upper() != "R":
             return False
@@ -2203,42 +2343,48 @@ class ClusterUiRenderer:
                     rl.set_shader_value(vehicle_shader, view_loc, view_pos, rl.ShaderUniformDataType.SHADER_UNIFORM_VEC3)
         return camera
 
-    def _ev6_draw_reverse_car_model(self) -> None:
+    def _ev6_draw_reverse_car_model(self, state: ClusterUiState) -> None:
         from cluster_scene import EV6_EGO_HEIGHT_M, EV6_EGO_LENGTH_M, EV6_EGO_WIDTH_M
 
-        if self._vehicle_model is None:
+        model, key = self._ego_model(ego_model_name(state.car_fingerprint))
+        if model is None:
             return
+        scale = ((EV6_EGO_WIDTH_M, EV6_EGO_LENGTH_M, EV6_EGO_HEIGHT_M) if key == "ev6" else (1.82, 4.35, 1.35))
         rl.rl_disable_backface_culling()
         try:
-            rl.draw_model_ex(self._vehicle_model, rl.Vector3(0.0, 0.0, 0.035), rl.Vector3(0.0, 0.0, 1.0), 0.0,
-                             rl.Vector3(EV6_EGO_WIDTH_M, EV6_EGO_LENGTH_M, EV6_EGO_HEIGHT_M), rl.WHITE)
+            rl.draw_model_ex(model, rl.Vector3(0.0, 0.0, 0.035), rl.Vector3(0.0, 0.0, 1.0), 0.0,
+                             rl.Vector3(*scale), rl.WHITE)
         finally:
             rl.rl_enable_backface_culling()
 
     def _ev6_prepare_reverse_sprite(self, state: ClusterUiState) -> None:
-        # The first time R is shown, draw the car once with the reverse-screen camera at 2x resolution, crop it and keep
-        # it as a texture: every later frame draws one smooth image instead of the 3D model. Runs before the frame's
-        # render target is bound (nested render targets are not supported). A /data/ev6_reverse_car.png taken from
-        # the same angle replaces the generated image.
-        if getattr(self, "_ev6_reverse_sprite", None) is not None or not self._ev6_reverse_screen_active(state):
+        """Build the selected car sprite outside the frame target; own every temporary GPU object."""
+        if not self._ev6_reverse_screen_active(state):
             return
-        if getattr(self, "_vehicle_model", None) is None:
+        model, name = self._ego_model(ego_model_name(state.car_fingerprint))
+        key = (name, self.width, self.height)
+        if model is None or self._ev6_reverse_sprite_key == key:
             return
-        self._ev6_reverse_sprite = False  # one attempt; the 3D model stays as the fallback
+        if self._ev6_reverse_sprite:
+            rl.unload_texture(self._ev6_reverse_sprite[0])
+        self._ev6_reverse_sprite_key = key
+        self._ev6_reverse_sprite = False  # Failure falls back to the live 3D model until the next context/model.
+        target = image = texture = None
         try:
             scale = EV6_REVERSE_SPRITE_SUPERSAMPLE
             width, height = int(self.width * scale), int(self.height * scale)
             target = rl.load_render_texture(width, height)
+            rl.begin_texture_mode(target)
             try:
-                rl.begin_texture_mode(target)
-                rl.clear_background(rl.Color(214, 216, 220, 0))  # light, transparent: no dark fringe when filtered
+                rl.clear_background(rl.Color(214, 216, 220, 0))
                 rl.begin_mode_3d(self._ev6_reverse_camera())
-                self._ev6_draw_reverse_car_model()
-                rl.end_mode_3d()
-                rl.end_texture_mode()
-                image = rl.load_image_from_texture(target.texture)
+                try:
+                    self._ev6_draw_reverse_car_model(state)
+                finally:
+                    rl.end_mode_3d()
             finally:
-                rl.unload_render_texture(target)
+                rl.end_texture_mode()
+            image = rl.load_image_from_texture(target.texture)
             rl.image_flip_vertical(image)
             rl.image_format(image, rl.PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)
             alpha = np.frombuffer(rl.ffi.buffer(image.data, image.width * image.height * 4),
@@ -2246,21 +2392,28 @@ class ClusterUiRenderer:
             rows = np.nonzero(alpha.max(axis=1))[0]
             cols = np.nonzero(alpha.max(axis=0))[0]
             if len(rows) == 0:
-                rl.unload_image(image)
                 return
             x0, y0 = int(cols[0]), int(rows[0])
             crop_w, crop_h = int(cols[-1]) - x0 + 1, int(rows[-1]) - y0 + 1
             rl.image_crop(image, rl.Rectangle(x0, y0, crop_w, crop_h))
-            if os.path.isfile(EV6_REVERSE_CAR_IMAGE):
+            if name == "ev6" and os.path.isfile(EV6_REVERSE_CAR_IMAGE):
                 rl.unload_image(image)
+                image = None
                 image = rl.load_image(EV6_REVERSE_CAR_IMAGE)
             texture = rl.load_texture_from_image(image)
-            rl.unload_image(image)
             rl.gen_texture_mipmaps(texture)
             rl.set_texture_filter(texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
             self._ev6_reverse_sprite = (texture, (x0 / scale, y0 / scale, crop_w / scale, crop_h / scale))
+            texture = None
         except Exception as exc:
-            print(f"EV6 reverse screen: car image not generated, drawing the 3D model: {exc}", flush=True)
+            print(f"Reverse car preview unavailable, using the 3D model: {exc}", flush=True)
+        finally:
+            if texture is not None:
+                rl.unload_texture(texture)
+            if image is not None:
+                rl.unload_image(image)
+            if target is not None:
+                rl.unload_render_texture(target)
 
     def _ev6_draw_reverse_screen(self, state: ClusterUiState) -> None:
         theme = self._current_theme()
@@ -2296,11 +2449,11 @@ class ClusterUiRenderer:
         rl.begin_mode_3d(camera)
         try:
             fill = rl.Color(*accent, 46 if dark else 34)
-            for a, b in zip(points, points[1:]):
+            for a, b in zip(points, points[1:], strict=False):
                 quad(side(a, -half_w, 0.01), side(a, half_w, 0.01), side(b, half_w, 0.01), side(b, -half_w, 0.01), fill)
             line = rl.Color(*accent, 230)
             for offset in (-half_w, half_w):
-                for a, b in zip(points, points[1:]):
+                for a, b in zip(points, points[1:], strict=False):
                     quad(side(a, offset - 0.07, 0.02), side(a, offset + 0.07, 0.02),
                          side(b, offset + 0.07, 0.02), side(b, offset - 0.07, 0.02), line)
             for distance_m, color in EV6_REVERSE_MARKS:
@@ -2318,7 +2471,7 @@ class ClusterUiRenderer:
                     quad(rl.Vector3(inner, 2.2, 0.01), rl.Vector3(outer, 2.2, 0.01), rl.Vector3(outer, -2.5, 0.01),
                          rl.Vector3(inner, -2.5, 0.01), rl.Color(*warn, int(170 * (1 - i / 6))))
             if not sprite:
-                self._ev6_draw_reverse_car_model()  # fallback until the car image exists
+                self._ev6_draw_reverse_car_model(state)  # fallback until the car image exists
         finally:
             rl.end_mode_3d()
         if sprite:
@@ -2343,8 +2496,9 @@ class ClusterUiRenderer:
             korean = self.language == CLUSTER_LANGUAGE_KO
             text("R", 70, 150, 140, "text")
             text("후진" if korean else "Reverse", 190, 180, 34, "muted")
-            text(f"{abs(float(getattr(state, 'speed_kph', 0.0) or 0.0)):.0f}", 70, 330, 84, "text")
-            text("km/h", 150 if abs(float(getattr(state, 'speed_kph', 0.0) or 0.0)) < 9.5 else 190, 350, 30, "muted")
+            speed = display_speed(abs(state.speed_kph), self.is_metric)
+            text(f"{speed:.0f}", 70, 330, 84, "text")
+            text(speed_unit(self.is_metric), 150 if speed < 9.5 else 190, 350, 30, "muted")
 
             x0, x1 = 1500, 1860
             if abs(steering_deg) < 5.0:
@@ -2373,7 +2527,14 @@ class ClusterUiRenderer:
 
     def _prepare_trip_report_cache(self, state: ClusterUiState, now: float | None = None) -> None:
         """Refresh the expensive trip-report panel outside the active frame target."""
-        self._ev6_prepare_reverse_sprite(state)  # EV6 HUD patch v15: reverse-screen car image, also outside the frame
+        if clean_ui_enabled():  # EV6 HUD sync v23
+            self._load_park_vehicle_models()
+        if self._ev6_park_screen_active(state) or self._ev6_reverse_screen_active(state):
+            self._load_park_vehicle_models()
+            self._prepare_park_model_texture(state)
+            self._ev6_prepare_reverse_sprite(state)
+            self._trip_report_cache_visible = False
+            return
         if self._effective_screen_mode(state) != CLUSTER_SCREEN_MODE_TRIP_REPORT:
             self._trip_report_cache_visible = False
             return
@@ -2466,7 +2627,7 @@ class ClusterUiRenderer:
         highlight_lane_lit: bool,
         theme: ClusterTheme,
     ) -> ClusterScene:
-        cache_key = (*cluster_scene_state_key(state), highlight_lane_lit, theme)
+        cache_key = (*cluster_scene_state_key(state), highlight_lane_lit, theme, clean_ui_enabled())
         if self._scene_cache is not None and cache_key == self._scene_cache_key:
             return self._scene_cache
         scene = build_cluster_scene(
@@ -3732,11 +3893,28 @@ class ClusterUiRenderer:
                 rl.unload_model(model)
                 return
             self._vehicle_model = model
-            self._attach_vehicle_shader(model)
-            self._other_vehicle_models = self._load_other_vehicle_models()
         except Exception as exc:
             print(f"Cybertruck vehicle model load failed: {exc}")
             self._vehicle_model = None
+
+    def _load_park_vehicle_models(self) -> None:
+        """P/R resources never replace the normal driving model or its material."""
+        if self._park_vehicle_models_loaded:
+            return
+        self._park_vehicle_models_loaded = True
+        if PARK_VEHICLE_MODEL_PATH.exists():
+            try:
+                mesh = self._load_obj_mesh(PARK_VEHICLE_MODEL_PATH, park_materials=True)
+                rl.upload_mesh(rl.ffi.addressof(mesh), False)
+                model = rl.load_model_from_mesh(mesh)
+                if rl.is_model_valid(model):
+                    self._park_vehicle_model = model
+                    self._attach_vehicle_shader(model)
+                else:
+                    rl.unload_model(model)
+            except Exception as exc:
+                print(f"Parked EV6 fallback model load failed: {exc}")
+        self._other_vehicle_models = self._load_other_vehicle_models()
 
     def _load_other_vehicle_models(self) -> list[object]:
         # Lead / cut-in / confident side vehicles: every OBJ in assets/models/others (sorted), else the
@@ -3746,9 +3924,10 @@ class ClusterUiRenderer:
             paths = [OTHER_VEHICLE_MODEL_PATH]
         models = []
         self._other_vehicle_paint = []
+        self._other_vehicle_names = []
         for path in paths:
             try:
-                mesh = self._load_obj_mesh(path)
+                mesh = self._load_obj_mesh(path, park_materials=True)
                 rl.upload_mesh(rl.ffi.addressof(mesh), False)
                 model = rl.load_model_from_mesh(mesh)
                 if not rl.is_model_valid(model):
@@ -3764,6 +3943,7 @@ class ClusterUiRenderer:
                     if override_loc >= 0:
                         paint = (shader, override_loc)
                 models.append(model)
+                self._other_vehicle_names.append(path.stem.removesuffix("_cluster"))
                 self._other_vehicle_paint.append(paint)
             except Exception as exc:
                 print(f"Other vehicle model {path.name} load failed: {exc}")
@@ -3785,6 +3965,8 @@ class ClusterUiRenderer:
         return True
 
     def _uses_other_model(self, vehicle: VehicleBox) -> bool:
+        if not clean_ui_enabled():
+            return False
         if not self._other_vehicle_models or vehicle.source == "radarPoint":
             return False
         if vehicle.primary or vehicle.cut_in:
@@ -3933,7 +4115,7 @@ class ClusterUiRenderer:
             if image is not None and rl.is_image_valid(image):
                 rl.unload_image(image)
 
-    def _load_obj_mesh(self, path: Path):
+    def _load_obj_mesh(self, path: Path, *, park_materials: bool = False):
         vertices: list[tuple[float, float, float]] = []
         normals: list[tuple[float, float, float]] = []
         mesh_vertices: list[float] = []
@@ -3979,7 +4161,8 @@ class ClusterUiRenderer:
             elif tag == "vn" and len(parts) >= 4:
                 normals.append((float(parts[1]), float(parts[2]), float(parts[3])))
             elif tag == "usemtl" and len(parts) >= 2:
-                material_color = vehicle_material_color(parts[1])
+                material_color = (vehicle_material_color(parts[1]) if park_materials
+                                  else VEHICLE_MATERIAL_COLORS.get(parts[1], DEFAULT_VEHICLE_MATERIAL_COLOR))
             elif tag == "f" and len(parts) >= 4:
                 face = [parse_face_token(token) for token in parts[1:]]
                 for index in range(1, len(face) - 1):
@@ -4032,7 +4215,7 @@ class ClusterUiRenderer:
         scene_offset_x = driving_offset_x - view_shift_x
         if abs(scene_offset_x) > 0.001:
             rl.rl_viewport(int(round(scene_offset_x)), 0, self.width, self.height)
-        if self._vehicle_shaders:
+        if clean_ui_enabled() and self._vehicle_shaders:
             view_pos = rl.ffi.new("float[]", [float(camera.position.x), float(camera.position.y), float(camera.position.z)])
             for vehicle_shader, view_loc in self._vehicle_shaders:
                 if view_loc >= 0:
@@ -4044,7 +4227,8 @@ class ClusterUiRenderer:
         if abs(scene.scene_shift_x_m) > 0.0001:
             rl.rl_translatef(scene.scene_shift_x_m, 0.0, 0.0)
         try:
-            self._draw_ground()  # EV6 HUD patch v5
+            if clean_ui_enabled():
+                self._draw_ground()  # EV6 HUD patch v5
             profile_stage = self._profile_start()
             for strip in scene.highlight_lanes:
                 self._draw_strip(strip)
@@ -4116,8 +4300,8 @@ class ClusterUiRenderer:
         rl.rl_begin(rl.RL_TRIANGLES)
         for index in range(len(GROUND_ROWS_M) - 1):
             y0, y1 = GROUND_ROWS_M[index], GROUND_ROWS_M[index + 1]
-            c0 = [int(round(n + (f - n) * GROUND_FADE[index])) for n, f in zip(near, far)]
-            c1 = [int(round(n + (f - n) * GROUND_FADE[index + 1])) for n, f in zip(near, far)]
+            c0 = [int(round(n + (f - n) * GROUND_FADE[index])) for n, f in zip(near, far, strict=True)]
+            c1 = [int(round(n + (f - n) * GROUND_FADE[index + 1])) for n, f in zip(near, far, strict=True)]
             for x, y, c in ((-half_w, y0, c0), (half_w, y0, c0), (half_w, y1, c1),
                             (-half_w, y0, c0), (half_w, y1, c1), (-half_w, y1, c1)):
                 rl.rl_color4ub(c[0], c[1], c[2], 255)
@@ -4580,10 +4764,13 @@ class ClusterUiRenderer:
             rl.rl_disable_backface_culling()
             alpha = int(92 + 163 * clamp(vehicle.confidence, 0.0, 1.0))
             model = self._vehicle_model
-            if vehicle.source == "radarPoint":
+            if not clean_ui_enabled():
+                tint = rl_color(vehicle.body_color) if vehicle.source == "radarPoint" else rl_color(WHITE, alpha)
+            elif vehicle.source == "radarPoint":
                 tint = rl_color(vehicle.body_color)
             elif is_ego:
-                tint = rl_color(WHITE, alpha)  # ego: EV6, Snow White Pearl
+                model = self._ego_model(vehicle.model_name)[0] or self._vehicle_model  # EV6 HUD sync v23: fallback
+                tint = rl_color(WHITE, alpha)
             elif self._uses_other_model(vehicle):
                 index = self._other_model_index(vehicle)
                 held = False
@@ -8311,7 +8498,7 @@ class ClusterUiRenderer:
         self._ev6_draw_signal_assist_chip(theme)  # EV6 HUD patch v22
         speed_color = text_color
         if limit_value is not None and limit_value > 0 and speed_value > limit_value:
-            speed_color = RED if speed_value >= limit_value + CLEAN_SPEED_OVER_RED_KPH else AMBER
+            speed_color = RED if speed_value >= limit_value + display_speed(CLEAN_SPEED_OVER_RED_KPH, self.is_metric) else AMBER
         self._draw_text_with_stroke(str(speed_value), 175.0, 300.0, 160, speed_color, stroke, 3, anchor="center")
         self._draw_text("km/h" if self.is_metric else "mph", 175.0, 384.0, 24, muted, anchor="center")
 
@@ -8342,7 +8529,7 @@ class ClusterUiRenderer:
             if on and not held:
                 rl.draw_circle_lines(int(cx), int(cy), 16.0, rl_color((*lit, 120)))
 
-    def _draw_clean_slowdown_badge(self, state: ClusterUiState, theme) -> None:
+    def _draw_clean_slowdown_badge(self, state: ClusterUiState, theme) -> float | None:
         # why openpilot is slowing down (carrotMan desiredSource) or a planned stop
         _, stroke, muted = self._clean_text_colors(theme)
         label = None

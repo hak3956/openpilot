@@ -7,6 +7,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from statistics import median
 
+from cluster_vehicle_models import ego_model_name
+
 from cluster_config import (
     AMBER,
     BLUE,
@@ -240,7 +242,8 @@ class VehicleBox:
     cut_in: bool = False
     primary: bool = False
     annotate: bool = False
-    model_key: int = -1  # EV6 HUD patch v3: radar track id (stable model choice)
+    model_key: int = -1  # Radar track id (stable surrounding model choice)
+    model_name: str = "cybertruck"
 
 
 @dataclass(frozen=True, slots=True)
@@ -2644,7 +2647,8 @@ def radar_point_vehicle_heading(
     lateral_speed_offset_mps: float = 0.0,
 ) -> tuple[float, float, float, float]:
     longitudinal_speed_kph = radar_point_absolute_speed_kph(point, state)
-    oncoming = longitudinal_speed_kph is not None and longitudinal_speed_kph <= -RADAR_MOVING_VEHICLE_MIN_SPEED_KPH
+    oncoming = (clean_ui_enabled() and longitudinal_speed_kph is not None
+                and longitudinal_speed_kph <= -RADAR_MOVING_VEHICLE_MIN_SPEED_KPH)
     return vehicle_heading_from_velocity(
         longitudinal_speed_kph,
         radar_point_heading_lateral_speed_mps(point, state, lateral_speed_offset_mps),
@@ -3013,6 +3017,7 @@ def translate_vehicle_box_x(vehicle: VehicleBox, shift_x_m: float) -> VehicleBox
         primary=vehicle.primary,
         annotate=vehicle.annotate,
         model_key=vehicle.model_key,
+        model_name=vehicle.model_name,
     )
 
 
@@ -3073,11 +3078,7 @@ def road_edge_color(
     return base[0], base[1], base[2], int(clamp(alpha, 120, 245))
 
 
-CLEAN_UI_CLASSIC_FLAG = "/data/ev6_hud_classic"  # EV6 HUD patch v6
-_clean_ui_cache = [-10.0, True]
-
-
-# EV6 HUD patch v14: Kia EV6 body 4.68 x 1.88 x 1.55 m. The ego model (cybertruck_cluster.obj) is normalised to a unit
+# EV6 HUD patch v14: Kia EV6 body 4.68 x 1.88 x 1.55 m. The ego model (ev6_cluster.obj) is normalised to a unit
 # box whose width includes the mirrors (body 0.878, mirrors 0.959) and whose height is 1.065, so scale to match.
 EV6_EGO_LENGTH_M = 4.68
 EV6_EGO_WIDTH_M = 1.88 / 0.878
@@ -3092,19 +3093,27 @@ def ev6_ego_vehicle_box(box: VehicleBox) -> VehicleBox:
     return replace(box, center=center, width_m=EV6_EGO_WIDTH_M, length_m=EV6_EGO_LENGTH_M, height_m=EV6_EGO_HEIGHT_M)
 
 
+CLEAN_UI_CLASSIC_FLAG = "/data/ev6_hud_classic"  # EV6 HUD sync v23: touch this file for upstream's driving layout
+_clean_ui_cache = [-10.0, True]
+
+
 def clean_ui_enabled() -> bool:
+    """EV6 HUD sync v23: the clean driving layout, on unless /data/ev6_hud_classic exists (EV6_HUD_CLEAN=0/1 overrides).
+
+    Upstream keeps it dormant; the repo's unit tests still see upstream's layout (off under pytest).
+    """
     now = time.monotonic()
     if now - _clean_ui_cache[0] > 2.0:
-        import os as _os
+        import os
+        import sys
         _clean_ui_cache[0] = now
-        import sys as _sys
-        env = _os.environ.get("EV6_HUD_CLEAN")
+        env = os.environ.get("EV6_HUD_CLEAN")
         if env in ("0", "1"):
             _clean_ui_cache[1] = env == "1"
-        elif "pytest" in _sys.modules:
-            _clean_ui_cache[1] = False  # the repo's unit tests check the original layout
+        elif "pytest" in sys.modules:
+            _clean_ui_cache[1] = False
         else:
-            _clean_ui_cache[1] = not _os.path.exists(CLEAN_UI_CLASSIC_FLAG)
+            _clean_ui_cache[1] = not os.path.exists(CLEAN_UI_CLASSIC_FLAG)
     return _clean_ui_cache[1]
 
 
@@ -3594,6 +3603,7 @@ def data_geometry_mode_for_state(state: ClusterUiState) -> bool:
 
 
 SCENE_STATE_FIELDS = (
+    "car_fingerprint",
     "speed_kph",
     "steering",
     "vision_yaw_rate_rps",
@@ -3815,7 +3825,10 @@ def build_cluster_scene(
         target_offset,
     )
     if clean_ui_enabled():
-        ego_vehicle = ev6_ego_vehicle_box(ego_vehicle)  # EV6 HUD patch v14
+        model_name = ego_model_name(state.car_fingerprint)
+        if model_name == "ev6":
+            ego_vehicle = ev6_ego_vehicle_box(ego_vehicle)
+        ego_vehicle = replace(ego_vehicle, model_name=model_name)
     show_ego_vehicle = not cluster_camera_view_is_road_camera(state.camera_view_mode)
     merged_radar_labels = frozenset[str]()
     if route_mode:
