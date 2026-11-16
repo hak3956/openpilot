@@ -549,3 +549,11 @@ def test_upper_sequence_changes_no_other_decoded_packet_fields(camera):
     expected.pop('JerkUpperLimit')
     assert actual == expected
     assert controller.phase == reference.phase
+
+
+def test_roll_after_unconfirmed_hold_keeps_stop_request_and_zero_accel():
+  controller = CanfdStopping()
+  for _ in range(20):
+    step(controller, speed=.02, previous_value=0.)
+  cmd = step(controller, speed=.08, previous_value=0.)
+  assert (cmd.stop_req, cmd.raw, cmd.value) == (1, 0., 0.)

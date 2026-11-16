@@ -117,18 +117,18 @@ Ignoring `x0.01`, `x0.001`, `cm`, `km/h`, or `%` can make a value appear one hun
 
 ## Settings map
 
-The current `carrot_settings.json` contains **213 parameters**. The driver-monitoring exception and `NNFF` are search only; the remaining entries appear in these menus:
+The current `carrot_settings.json` contains **219 parameters**. The driver-monitoring exception and `NNFF` are search only; the remaining entries appear in these menus:
 
 | Category | Count | Groups |
 |---|---:|---|
-| Driving control | 136 | Startup and auto, Tesla, buttons and presets, steering, speed and deceleration, cruise and following gap |
-| Vehicle and hardware | 18 | Hyundai/Kia, CAN FD/HDA, radar, driver monitoring, vehicle assistance, device hardware |
+| Driving control | 137 | Startup and auto, Tesla, buttons and presets, steering, speed and deceleration, cruise and following gap |
+| Vehicle and hardware | 23 | Hyundai/Kia, CAN FD/HDA, radar, driver monitoring, vehicle assistance, device hardware |
 | Display | 34 | Information, path, brightness/on-road view, external HUD |
 | System | 12 | Recording/power, network/map, sound, software |
 
 ## Driving control
 
-These 136 settings can affect driving behavior. Change one item at a time.
+These 137 settings can affect driving behavior. Change one item at a time.
 
 <a id="start-auto"></a>
 ### Startup and auto — 9 settings; Tesla — 6 settings
@@ -231,7 +231,7 @@ While external navigation is connected, deceleration, countdowns, and navigation
 
 `TrafficLightDetectMode` is `0` off, `1` stop detection, or `2` stop and go detection. This is model-based assistance; the driver must always verify the signal.
 
-### Cruise and following gap — 29 settings overall, 26 on Hyundai/Kia/Genesis
+### Cruise and following gap — 30 settings overall, 27 on Hyundai/Kia/Genesis
 
 | Section | Parameters | Purpose |
 |---|---|---|
@@ -266,9 +266,6 @@ Deceleration preview operates independently of the response level. During active
 
 For Hyundai/Kia CANFD openpilot longitudinal control, aReqRaw and aReqValue become zero in the first StopReq frame, so this setting does not change transmitted acceleration while StopReq remains active. Automatic release/retry is removed.
 
-On supported Tesla vehicles, [automatic cruise set-speed adjustment](tesla.md#automatic-cruise-speed) requires the additional vehicle bus, **alpha longitudinal** (`AlphaLongitudinalEnabled`) and Carrot Web's `TeslaAutoSpeedLimit`. The new switch defaults to OFF and requires a full restart after changes. Navigation/Carrot speed control still takes precedence and pauses DAS-based adjustment until it ends and the limit is stable again; any manual pause remains in effect. Turning the right speed wheel pauses it; an opposite-direction wheel gesture within one second or disengaging and re-engaging resumes it. OFF stops automatic wheel output without disabling manual scrolling.
-
-<a id="vehicle-hardware"></a>
 ## Vehicle and hardware
 
 These settings describe the car, harness, and device hardware configuration. Do not enable them merely as a display experiment.
@@ -276,7 +273,7 @@ These settings describe the car, harness, and device hardware configuration. Do 
 | Group | Parameters | Purpose |
 |---|---|---|
 | Hyundai/Kia | `HyundaiCameraSCC`, `IsLdwsCar`, `HapticFeedbackWhenSpeedCamera` | SCC connection, LDWS behavior, and speed-event haptics |
-| CAN FD/HDA | `CanfdHDA2`, `HyundaiCanfdClusterDirectTx`, `CanfdDebug`, `HDPuse` | HDA2 selection, cluster direct send, CAN FD diagnostics, and HDP |
+| CAN FD/HDA | `CanfdHDA2`, `HyundaiCanfdClusterDirectTx`, `CanfdBlinkerKick`, `CanfdBlinkerKickMode`, `CanfdBlinkerKickModelMode`, `CanfdDebug`, `HDPuse`, `CcncClusterDisplay`, `CcncTrafficBackground` | HDA2 selection, cluster direct send, lane-change auto blinker, CAN FD diagnostics, HDP, and CCNC cluster display options |
 | Radar | `EnableRadarTracks`, `RadarTrackFlip`, `EnableCornerRadar`, `CarrotRadarMode`, `CarrotRadarCutInSensitivity` | SCC radar, front-track orientation, corner radar, and Carrot Radar processing and cut-in sensitivity |
 | Driver monitoring | `DriverMonitoringEnabled` (search only), `DriverMonitoringMode`, `CarrotVisionEnabled`, `MuteDoor`, `MuteSeatbelt` | Driver monitoring and selected vehicle alerts |
 | Vehicle assistance | `MaxAngleFrames`, `SpeedFromPCM` | Steering-angle frames and stock-SCC speed control |
@@ -294,6 +291,12 @@ Regardless of gear or speed, including at standstill, three distinct physical CA
 See [Radar tracks and corner radar](radar.md) before changing radar modes.
 
 **Cluster CAN Direct Send** (`HyundaiCanfdClusterDirectTx`) compares the original direct-send method on Hyundai/Kia/Genesis CAN-FD CameraSCC vehicles with intermittent cluster warnings. It defaults to OFF for every vehicle; enable it manually on an affected vehicle. Reboot the device after changing it. Updated Panda firmware supporting this setting is required. Resolution of vehicle warnings has not been validated.
+
+**Lane Change Auto Blinker** (`CanfdBlinkerKick`, default OFF) works only on the IONIQ 5 PE, IONIQ 9 and Azera / Grandeur GN7 running CAN-FD with camera SCC (`HyundaiCameraSCC` 1–3). Native transmission requires this configuration. When the driver starts steering across a lane line without signalling, it lights that side's blinker for about 1 s through the parking ECU's SPAS2 message. `CanfdBlinkerKickMode` is `0` (send only after the parking ECU answers) or `1` (default: when it does not answer, panda sends our frame right behind each stock frame). `CanfdBlinkerKickModelMode` also lights the blinker for model lane changes (default `0`: held through the change). Turning it on takes effect at the next onroad start and then switches `CanfdBlinkerControl` off; turning it off applies at once. Updated Panda firmware is required.
+
+Enabling `CanfdBlinkerKick` immediately suspends USB2CAN and BT2CAN indicator output on every car. Kick waits for exclusive output ownership and expiration of outstanding external commands. Automatic lamp feedback remains isolated for at least 12 s after its last record and until both lamps stay off for 1 s. While Kick has exclusive ownership after external output ends, a verified new physical lever operation immediately reaches normal lane-change admission, including during this interval. Driver operation stops Kick output and retains lane, blind-spot, speed and steering-confirmation checks. Missing or stale lever data keeps lamp-only feedback isolated during this interval.
+
+`CcncClusterDisplay` and `CcncTrafficBackground` (both default `0`) change the CCNC cluster frames that openpilot re-sends. This needs Hyundai/Kia/Genesis CAN-FD with camera SCC and openpilot longitudinal control (`HyundaiCameraSCC` 1 or 2), and the camera's 0x161 frame (0x162 for the HDP icon) must have been received. `0` turns off only that key's items; the [always-on changes](#always-on-changes) apply regardless. `CcncClusterDisplay=1` shows lane visibility, steering state, the target-gap ring, engage popups, selected openpilot alert texts and the HDP icon like the stock HDA2 display. `CcncTrafficBackground=1` turns the background red while a red light is detected and green for 2 s after it turns green.
 
 With CAN-FD CameraSCC, openpilot longitudinal control and corner radar enabled, valid CAN, Drive, released brakes and speed above 10.8 km/h allow periodic requests to switch on stock SCC MAIN. This applies independently of AutoEngage and Carrot cruise engagement, and these requests stop once MAIN is on. SET and standstill-resume requests retain the existing Carrot cruise engagement requirement. With CAN-FD CameraSCC and openpilot longitudinal control, the OEM SCC MAIN state used for cluster display is tracked separately from Carrot engagement intent. Steering activation follows AutoEngage initialization and the existing driver-button settings.
 
@@ -425,6 +428,32 @@ Check storage use for recording and network use, heat, and privacy before enabli
 `SoundVolumeAdjust` changes general sound volume. DM's first audible warning has a 70% minimum output gain; its final warning always uses 100%, regardless of volume settings or ambient-noise attenuation. The preceding visual-only notice remains silent. See [driver monitoring](driver-monitoring.md) for details.
 
 Experimental DM switches to standard monitoring for 20 seconds only when moving traffic first appears after an absence. Additional vehicles do not extend it; experimental monitoring then resumes, with no empty-road bonus while traffic remains.
+
+<a id="always-on-changes"></a>
+## Always-on changes (no setting)
+
+These fixes apply without any setting.
+
+CCNC cluster, on the cars described for `CcncClusterDisplay`:
+
+- HDP gap: while HDP is active, the cluster shows the real gap bars (previously always 4). Gaps 1–3 use the HDP spacing style, and a gap change shows the stock "distance N" popup for 2 s.
+- Side objects: a corner box that the stock frame shows with distance 0 is drawn as the grey car.
+- Standstill icons: while engaged with steering enabled, the steering and lane-change icons stay on at standstill, where steering pauses.
+
+Hyundai/Kia CAN-FD with camera SCC and openpilot longitudinal control:
+
+- Set speed and gap sync: while engaged, with the stock SCC in normal cruise above about 11 km/h, short +/−/GAP presses on the camera bus keep the camera's set speed and gap equal to openpilot's. A device drop-out then leaves the car at the same speed and gap. Not on cars using the 0x10B `CRUISE_BUTTONS_ALT2` message, and it waits 1 s after any driver button press.
+- Restart hand-over: if the stock SCC is cruising when the device (re)starts, the car keeps cruising and openpilot engages at the stock set speed. It is checked only in the first 30 s, and any cancel or MAIN press ends the wait.
+- Paddle stop: openpilot's SCC output stays off for 0.3 s after the paddle reads released, so a held paddle's brief release readings do not re-engage it.
+
+Other:
+
+- Signal stop: while slowing to a signal stop (`e2eStop`) below 3 m/s, a green or off frame no longer ends the stop. Once stopped, green starts the car as before.
+- Carrot Radar: for 3 frames after the camera lead jumps, a new stationary radar track 3–40 m short of a moving central front track is not taken as the lead at once. It must pass the stationary confirmation.
+- Hyundai/Kia steering: driver torque shorter than 0.3 s while steering no longer counts as a repeated override, so it does not lengthen the steering recovery.
+- CAN error alert: the second line names up to two timed-out messages.
+- Build: a power cut during a build requests Rebuild All at the next boot. On comma four, empty object files from a failed build are removed and the build retries once without the cache.
+- panda: rejected-send debug prints are limited to once per second, and pandad reads at most one debug buffer per call, so a print flood no longer makes the panda go SILENT.
 
 ## Signal Assistance Mode (Trial)
 
