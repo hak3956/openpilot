@@ -1639,6 +1639,21 @@ class H264UsbPipeline:
             self._sps_patch_cache = (raw_sps, patched_sps)
         return packet
 
+    def submit_external_access_unit(self, packet: bytes) -> None:
+        """EV6 HUD sync v24: an access unit encoded elsewhere (the phone), sent with this pipeline's own SPS fix-ups
+        and USB packets. The native backend's sender thread sends it in order with everything else."""
+        self.check_error()
+        chunk_size = max(1, self.chunk_size)
+        chunks = self._packetize_h264_for_usb(self._prepare_hardware_packet(packet), chunk_size)
+        packet_queue = self._packet_queue
+        if packet_queue is not None:
+            packet_queue.put(_NativeAccessUnit(tuple(chunks), False, True), timeout=1.0)
+            return
+        lock = self.__dict__.setdefault("_ev6_external_lock", threading.Lock())
+        with lock:
+            for chunk in chunks:
+                self._send_h264_chunk(chunk, chunk_size, source="phone")
+
     def _packetize_h264_for_usb(self, packet: bytes, chunk_size: int) -> list[bytes]:
         chunk_size = max(1, chunk_size)
         if len(packet) <= chunk_size:

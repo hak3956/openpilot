@@ -54,6 +54,7 @@ from cluster_git_status import GitBranchStatusProvider
 from cluster_gles_dmabuf import DirectNv12DmabufError
 from cluster_gles_readback import DirectNv12ReadbackError
 from cluster_display import CLUSTER_LANGUAGE_KO, normalize_cluster_language, normalize_metric_setting
+import ev6_hud_phone  # EV6 HUD sync v24: the phone may draw and encode the HUD
 from cluster_h264_pipeline import (
     DEFAULT_H264_DEVICE,
     DEFAULT_H264_ENCODER_ALIGN,
@@ -1076,6 +1077,7 @@ def run_demo(
             profile_stage = time.perf_counter()
             h264_pipeline.start()
             profile.add_elapsed("usb_h264.start", profile_stage)
+            ev6_hud_phone.start(h264_pipeline)  # EV6 HUD sync v24: accept the phone's HUD stream (TCP 7090)
             profile.add_samples(usb_display.profile_samples())
             usb_display.clear_profile_samples()
             if h264_pipeline.backend_name == "native":
@@ -1618,6 +1620,11 @@ def run_demo(
                         print(f"{CLUSTER_ORIENTATION_PARAM} updated: {active_orientation}", flush=True)
                 next_brightness_param_read = brightness_now + BRIGHTNESS_PARAM_POLL_SECONDS
 
+            if h264_pipeline is not None and ev6_hud_phone.active():
+                # EV6 HUD sync v24: the phone draws and encodes the HUD; skip this frame's rendering and encoding
+                # (settings, brightness and orientation above stay current). Back to drawing 1 s after the phone stops.
+                time.sleep(0.05)
+                continue
             if output_mode in ("window", "both"):
                 profile_stage = time.perf_counter()
                 if route_source is not None and route_tools_mode == "overlay":
